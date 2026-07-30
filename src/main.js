@@ -29,6 +29,7 @@ import { SurfWake } from "./vfx/surfWake.js";
 import { SpellSystem } from "./spells/spellSystem.js";
 import { Overlay } from "./ui/overlay.js";
 import { MobileControls } from "./ui/mobileControls.js";
+import { startPocketExpedition } from "./mobile/pocketExpedition.js";
 import { Sky } from "./render/sky.js";
 import { ShadowSystem } from "./render/shadows.js";
 import { Terrain } from "./terrain/terrain.js";
@@ -50,7 +51,9 @@ async function boot() {
     if (mobile) applyPreset("balanced");
 
     if (!navigator.gpu) {
-        loading.fail("WebGPU is not available in this browser.");
+        await loading.phase("opening the pocket expedition");
+        startPocketExpedition(canvas, audio);
+        await loading.done();
         return;
     }
 
@@ -68,7 +71,8 @@ async function boot() {
         await engine.initAsync();
     } catch (err) {
         console.error(err);
-        loading.fail("WebGPU device initialisation failed.");
+        startPocketExpedition(canvas, audio);
+        await loading.done();
         return;
     }
 
