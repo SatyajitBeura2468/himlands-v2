@@ -33,6 +33,7 @@ import { ShadowSystem } from "./render/shadows.js";
 import { Terrain } from "./terrain/terrain.js";
 import { DepthPass } from "./render/depthPass.js";
 import { PostChain } from "./post/postChain.js";
+import { Environment } from "./world/environment.js";
 import { whenReady } from "./core/gpuUtil.js";
 import * as loading from "./core/loading.js";
 
@@ -127,6 +128,12 @@ async function boot() {
     onChange("showTerrain", (v) => (terrain.mesh.isVisible = v));
     depthPass.registerCaster(terrain.mesh, terrain.makePrepassMaterial());
 
+    // A compact authored world layer around the procedural field: pines,
+    // slate outcrops, cairns, a shrine and sparse prayer cloth. It uses the
+    // same sun/sky radiance and the same custom depth/shadow infrastructure.
+    await loading.phase("setting stones along the high trail");
+    const environment = new Environment(scene, terrain, sky, shadows, depthPass);
+
     await loading.phase("welcoming the wanderer");
 
     const character = new CharacterController(terrain);
@@ -188,6 +195,7 @@ async function boot() {
     );
     await whenReady(sky.material, "sky material", [sky.mesh, false]);
     await depthPass.warmUp();
+    await environment.warmUp();
     post.update(0, 0, rig.distance);
     const passes = post.passes;
     for (let i = 0; i < passes.length; i++) {
@@ -251,6 +259,7 @@ async function boot() {
         audio.update(dt, character, figure.figure);
         const tSpells = performance.now();
         terrain.update(rig.camera.position, character.position, dt);
+        environment.update(time);
         const tTerrain = performance.now();
         // After the shadow refit, so the figure's uniforms carry this frame's
         // cascade matrices rather than last frame's.
@@ -293,7 +302,7 @@ async function boot() {
 
     globalThis.SNOWFLOW = {
         engine, scene, rig, character, figure, contact, spray, wake, spells, audio,
-        overlay, terrain, sky, shadows, post, depthPass,
+        overlay, terrain, environment, sky, shadows, post, depthPass,
         S, input, perfStats: stats,
     };
 }
