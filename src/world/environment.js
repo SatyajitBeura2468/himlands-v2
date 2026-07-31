@@ -11,21 +11,44 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
+import { Texture } from "@babylonjs/core/Materials/Textures/texture";
+import { Constants } from "@babylonjs/core/Engines/constants";
 import { Vector3, Color3 } from "@babylonjs/core/Maths/math";
 
 import { S } from "../core/settings.js";
 import { whenReady } from "../core/gpuUtil.js";
 import { PLAY_RADIUS } from "../terrain/heightfield.js";
 
+import rockAlbedoUrl from "../assets/world/rock-diff.jpg";
+import rockNormalUrl from "../assets/world/rock-normal.jpg";
+import rockRoughUrl from "../assets/world/rock-rough.jpg";
+import woodAlbedoUrl from "../assets/world/wood-diff.jpg";
+import woodNormalUrl from "../assets/world/wood-normal.jpg";
+import woodRoughUrl from "../assets/world/wood-rough.jpg";
+import barkAlbedoUrl from "../assets/world/bark-diff.jpg";
+import barkNormalUrl from "../assets/world/bark-normal.jpg";
+import barkRoughUrl from "../assets/world/bark-rough.jpg";
+import groundAlbedoUrl from "../assets/world/ground-diff.jpg";
+import groundNormalUrl from "../assets/world/ground-normal.jpg";
+import groundRoughUrl from "../assets/world/ground-rough.jpg";
+
 const PALETTE = {
-    rock: { albedo: new Color3(0.075, 0.090, 0.115), snow: 0.48, noise: 0.72 },
-    tree: { albedo: new Color3(0.045, 0.105, 0.095), snow: 0.26, noise: 1.1 },
-    wood: { albedo: new Color3(0.16, 0.095, 0.060), snow: 0.62, noise: 0.95 },
-    cloth: { albedo: new Color3(0.62, 0.19, 0.055), snow: 0.10, noise: 1.6 },
-    snow: { albedo: new Color3(0.58, 0.68, 0.78), snow: 0.82, noise: 1.8 },
-    grass: { albedo: new Color3(0.36, 0.34, 0.18), snow: 0.18, noise: 2.2 },
-    bush: { albedo: new Color3(0.075, 0.18, 0.16), snow: 0.34, noise: 1.35 },
-    tundra: { albedo: new Color3(0.20, 0.27, 0.22), snow: 0.46, noise: 1.5 },
+    rock: { albedo: new Color3(0.18, 0.20, 0.24), snow: 0.54, noise: 0.72, scale: 1.35, texture: "rock" },
+    tree: { albedo: new Color3(0.16, 0.25, 0.19), snow: 0.32, noise: 1.1, scale: 2.6, texture: "bark" },
+    foliage: { albedo: new Color3(0.075, 0.18, 0.105), snow: 0.38, noise: 1.65, scale: 4.8, texture: "ground" },
+    wood: { albedo: new Color3(0.35, 0.22, 0.12), snow: 0.68, noise: 0.95, scale: 1.8, texture: "wood" },
+    cloth: { albedo: new Color3(0.62, 0.19, 0.055), snow: 0.10, noise: 1.6, scale: 2.0, texture: "wood" },
+    snow: { albedo: new Color3(0.78, 0.84, 0.90), snow: 0.90, noise: 1.8, scale: 2.0, texture: "ground" },
+    grass: { albedo: new Color3(0.48, 0.39, 0.17), snow: 0.20, noise: 2.2, scale: 3.0, texture: "ground" },
+    bush: { albedo: new Color3(0.10, 0.28, 0.21), snow: 0.38, noise: 1.35, scale: 2.4, texture: "ground" },
+    tundra: { albedo: new Color3(0.26, 0.34, 0.25), snow: 0.50, noise: 1.5, scale: 2.8, texture: "ground" },
+};
+
+const TEXTURE_URLS = {
+    rock: [rockAlbedoUrl, rockNormalUrl, rockRoughUrl],
+    wood: [woodAlbedoUrl, woodNormalUrl, woodRoughUrl],
+    bark: [barkAlbedoUrl, barkNormalUrl, barkRoughUrl],
+    ground: [groundAlbedoUrl, groundNormalUrl, groundRoughUrl],
 };
 
 function baked(mesh, x, y, z, scale = null, rotation = null) {
@@ -45,33 +68,34 @@ function baked(mesh, x, y, z, scale = null, rotation = null) {
 function rock(scene, x, y, z, sx, sy, sz, seed) {
     const m = MeshBuilder.CreateIcoSphere("slateOutcrop", {
         radius: 1,
-        subdivisions: 2,
+        subdivisions: 3,
     }, scene);
     const yaw = (seed * 1.71) % (Math.PI * 2);
     return baked(m, x, y, z, new Vector3(sx, sy, sz), new Vector3(0, yaw, seed * 0.33));
 }
 
 function pine(scene, x, y, z, height, seed) {
-    const parts = [];
+    const trunkParts = [];
+    const foliageParts = [];
     const trunk = MeshBuilder.CreateCylinder("juniperTrunk", {
         diameterTop: 0.18,
         diameterBottom: 0.34,
         height: height * 0.62,
-        tessellation: 10,
+        tessellation: 16,
     }, scene);
-    parts.push(baked(trunk, x, y + height * 0.31, z));
+    trunkParts.push(baked(trunk, x, y + height * 0.31, z));
 
-    const tiers = 4;
+    const tiers = 8;
     for (let i = 0; i < tiers; i++) {
         const t = i / (tiers - 1);
         const cone = MeshBuilder.CreateCylinder("juniperBough", {
             diameterTop: 0.08,
-            diameterBottom: height * (0.28 - t * 0.045),
-            height: height * (0.28 - t * 0.025),
-            tessellation: 9,
+            diameterBottom: height * (0.30 - t * 0.035),
+            height: height * (0.20 - t * 0.010),
+            tessellation: 14,
         }, scene);
         const sway = Math.sin(seed * 3.1 + i * 1.7) * 0.08;
-        parts.push(baked(
+        foliageParts.push(baked(
             cone,
             x + sway * (1 - t),
             y + height * (0.38 + t * 0.42),
@@ -80,7 +104,7 @@ function pine(scene, x, y, z, height, seed) {
             new Vector3(0, seed * 0.45, 0)
         ));
     }
-    return parts;
+    return { trunkParts, foliageParts };
 }
 
 function box(scene, name, x, y, z, sx, sy, sz, rotationY = 0) {
@@ -90,7 +114,7 @@ function box(scene, name, x, y, z, sx, sy, sz, rotationY = 0) {
 
 function grassCluster(scene, x, y, z, height, seed) {
     const parts = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
         const blade = MeshBuilder.CreatePlane("alpineGrass", {
             width: 0.10 + (i % 2) * 0.045,
             height: height * (0.74 + (i % 3) * 0.12),
@@ -112,7 +136,7 @@ function grassCluster(scene, x, y, z, height, seed) {
 function shrubCluster(scene, x, y, z, scale, seed, name = "tundraShrub") {
     const parts = [];
     for (let i = 0; i < 3; i++) {
-        const m = MeshBuilder.CreateIcoSphere(name, { radius: 1, subdivisions: 1 }, scene);
+        const m = MeshBuilder.CreateIcoSphere(name, { radius: 1, subdivisions: 2 }, scene);
         const yaw = seed * 1.37 + i * 2.1;
         parts.push(baked(
             m,
@@ -150,6 +174,7 @@ export class Environment {
         this.materials = [];
         this.colliders = [];
         this.contactPulse = 0;
+        this.textureSets = new Map();
         this._depthMaterial = null;
         this.triangles = 0;
 
@@ -160,6 +185,7 @@ export class Environment {
         const scene = this.scene;
         const rocks = [];
         const trees = [];
+        const foliage = [];
         const wood = [];
         const cloth = [];
         const snow = [];
@@ -197,7 +223,9 @@ export class Environment {
             const z = p[1] + Math.cos(i * 2.4) * 2.5;
             const h = 5.0 + (i % 4) * 0.9;
             const y = this.terrain.heightAt(x, z);
-            trees.push(...pine(scene, x, y, z, h, i + 0.4));
+            const tree = pine(scene, x, y, z, h, i + 0.4);
+            trees.push(...tree.trunkParts);
+            foliage.push(...tree.foliageParts);
             this._collider(x, z, 0.72, "juniper");
         });
 
@@ -212,8 +240,19 @@ export class Environment {
             grass.push(...grassCluster(scene, x, y + 0.01, z, 0.62 + (i % 5) * 0.14, i + 0.3));
             if (i % 2 === 0) bushes.push(...shrubCluster(scene, x + 1.2, y, z - 0.7, 0.55 + (i % 4) * 0.11, i + 8, "blueJuniper"));
             if (i % 5 === 0) tundra.push(...shrubCluster(scene, x - 1.4, y, z + 1.1, 0.72 + (i % 3) * 0.12, i + 19));
+            if (i % 3 === 0) {
+                const rx = x - 1.9;
+                const rz = z + 1.4;
+                const rockScale = 0.42 + (i % 4) * 0.12;
+                rocks.push(rock(scene, rx, y + rockScale * 0.34, rz, rockScale * 1.25, rockScale * 0.72, rockScale, i + 320));
+                // Small boulders now have their own player-scale colliders as
+                // well; no more visual-only pebbles the character can ghost through.
+                this._collider(rx, rz, rockScale * 0.82, "small boulder");
+            }
             if (i % 7 === 0) {
-                trees.push(...pine(scene, x + 2.2, y, z - 1.5, 3.8 + (i % 4) * 0.45, i + 70));
+                const tree = pine(scene, x + 2.2, y, z - 1.5, 3.8 + (i % 4) * 0.45, i + 70);
+                trees.push(...tree.trunkParts);
+                foliage.push(...tree.foliageParts);
                 this._collider(x + 2.2, z - 1.5, 0.62, "juniper");
             }
         }
@@ -284,7 +323,8 @@ export class Environment {
         });
 
         this._addMerged(merge(scene, rocks, "environmentRocks"), "rock");
-        this._addMerged(merge(scene, trees, "environmentPines"), "tree");
+        this._addMerged(merge(scene, trees, "environmentPineTrunks"), "tree");
+        this._addMerged(merge(scene, foliage, "environmentPineFoliage"), "foliage");
         this._addMerged(merge(scene, wood, "environmentShrine"), "wood");
         this._addMerged(merge(scene, snow, "environmentSnowPillows"), "snow");
         this._addMerged(merge(scene, grass, "environmentGrass"), "grass");
@@ -391,13 +431,14 @@ export class Environment {
             this.scene,
             { vertex: "environment", fragment: "environment" },
             {
-                attributes: ["position", "normal"],
+                attributes: ["position", "normal", "uv"],
                 uniforms: [
                     "viewProjection", "cameraPos", "playerPos", "playerSpeed",
                     "sunDir", "sunRadiance", "shR",
                     "albedo", "snowTint", "snowAmount", "roughness", "noiseScale", "fogDensity",
-                    "time", "windAmount", "interactionAmount",
+                    "time", "windAmount", "interactionAmount", "textureScale",
                 ],
+                samplers: ["albedoTex", "normalTex", "roughTex"],
                 shaderLanguage: ShaderLanguage.WGSL,
             }
         );
@@ -407,11 +448,43 @@ export class Environment {
         m.setFloat("snowAmount", p.snow);
         m.setFloat("roughness", kind === "cloth" ? 0.68 : 0.86);
         m.setFloat("noiseScale", p.noise);
+        m.setFloat("textureScale", p.scale);
         m.setFloat("windAmount", kind === "grass" ? 0.06 : kind === "cloth" ? 0.028 : kind === "bush" ? 0.008 : 0.0);
         m.setFloat("interactionAmount", kind === "grass" ? 1.0 : kind === "bush" ? 0.35 : 0.0);
         m.metadata = { environmentKind: kind };
+        const textures = this._textureSet(p.texture);
+        m.setTexture("albedoTex", textures.albedo);
+        m.setTexture("normalTex", textures.normal);
+        m.setTexture("roughTex", textures.rough);
         this.materials.push(m);
         return m;
+    }
+
+    _textureSet(kind) {
+        const cached = this.textureSets.get(kind);
+        if (cached) return cached;
+        const [albedoUrl, normalUrl, roughUrl] = TEXTURE_URLS[kind];
+        const make = (url, name) => {
+            const tex = new Texture(
+                url,
+                this.scene,
+                false,
+                false,
+                Constants.TEXTURE_TRILINEAR_SAMPLINGMODE
+            );
+            tex.name = "world-" + kind + "-" + name;
+            tex.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
+            tex.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+            tex.anisotropicFilteringLevel = 8;
+            return tex;
+        };
+        const set = {
+            albedo: make(albedoUrl, "albedo"),
+            normal: make(normalUrl, "normal"),
+            rough: make(roughUrl, "rough"),
+        };
+        this.textureSets.set(kind, set);
+        return set;
     }
 
     _addMerged(mesh, kind) {
@@ -477,6 +550,11 @@ export class Environment {
     dispose() {
         for (const mesh of this.meshes) mesh.dispose();
         for (const material of this.materials) material.dispose();
+        for (const textures of this.textureSets.values()) {
+            textures.albedo.dispose();
+            textures.normal.dispose();
+            textures.rough.dispose();
+        }
         this._depthMaterial?.dispose();
     }
 }

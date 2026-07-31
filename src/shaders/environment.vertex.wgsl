@@ -4,6 +4,7 @@
 
 attribute position: vec3f;
 attribute normal: vec3f;
+attribute uv: vec2f;
 
 uniform viewProjection: mat4x4f;
 uniform cameraPos: vec3f;
@@ -16,6 +17,7 @@ uniform interactionAmount: f32;
 varying vWorld: vec3f;
 varying vNormal: vec3f;
 varying vViewDist: f32;
+varying vUV: vec2f;
 
 @vertex
 fn main(input: VertexInputs) -> FragmentInputs {
@@ -32,6 +34,7 @@ fn main(input: VertexInputs) -> FragmentInputs {
     world.z += cos(world.y * 1.4 + uniforms.time) * contact * 0.14;
     vertexOutputs.vWorld = world;
     vertexOutputs.vNormal = normalize(vertexInputs.normal);
+    vertexOutputs.vUV = vertexInputs.uv;
     vertexOutputs.vViewDist = distance(world, uniforms.cameraPos);
     vertexOutputs.position = uniforms.viewProjection * vec4f(world, 1.0);
 }
