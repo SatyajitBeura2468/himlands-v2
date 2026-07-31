@@ -14,7 +14,7 @@ import { Scene } from "@babylonjs/core/scene";
 import { Vector3, Color3, Color4 } from "@babylonjs/core/Maths/math";
 
 import { registerShaders } from "./shaders/registry.js";
-import { S, onChange, applyPreset } from "./core/settings.js";
+import { S, onChange } from "./core/settings.js";
 import {
     sample, checkSpike, stats, mark, installDrawCounter, endFrameDraws,
 } from "./core/perf.js";
@@ -28,8 +28,6 @@ import { SprayField } from "./vfx/particles.js";
 import { SurfWake } from "./vfx/surfWake.js";
 import { SpellSystem } from "./spells/spellSystem.js";
 import { Overlay } from "./ui/overlay.js";
-import { MobileControls } from "./ui/mobileControls.js";
-import { startMobileWebGL } from "./mobile/mobileWebgl.js";
 import { Sky } from "./render/sky.js";
 import { ShadowSystem } from "./render/shadows.js";
 import { Terrain } from "./terrain/terrain.js";
@@ -47,13 +45,9 @@ const START_POSITION = new Vector3(-2, 0, 0);
 async function boot() {
     const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("view"));
     const audio = new Soundscape(canvas);
-    const mobile = matchMedia("(pointer: coarse)").matches;
-    if (mobile) applyPreset("balanced");
 
     if (!navigator.gpu) {
-        await loading.phase("opening the pocket expedition");
-        startMobileWebGL(canvas, audio);
-        await loading.done();
+        loading.fail("WebGPU is not available in this browser.");
         return;
     }
 
@@ -71,8 +65,7 @@ async function boot() {
         await engine.initAsync();
     } catch (err) {
         console.error(err);
-        startMobileWebGL(canvas, audio);
-        await loading.done();
+        loading.fail("WebGPU device initialisation failed.");
         return;
     }
 
@@ -176,7 +169,6 @@ async function boot() {
 
     const overlay = new Overlay({ rig, character });
     initInput(canvas, { onToggleOverlay: () => overlay.toggle() });
-    const mobileControls = new MobileControls({ overlay, rig });
 
     // ------------------------------------------------------------- warm-up
     // Everything that can compile, compiles here — behind the loading screen.
@@ -301,7 +293,7 @@ async function boot() {
 
     globalThis.SNOWFLOW = {
         engine, scene, rig, character, figure, contact, spray, wake, spells, audio,
-        overlay, mobileControls, terrain, sky, shadows, post, depthPass,
+        overlay, terrain, sky, shadows, post, depthPass,
         S, input, perfStats: stats,
     };
 }

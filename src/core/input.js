@@ -32,7 +32,6 @@ export const input = {
 
 const keys = Object.create(null);
 let primaryPointerHeld = false;
-let touchX = 0, touchZ = 0, touchSurf = false, touchRibbon = false;
 
 const LOOK_SCALE = 0.0022;
 
@@ -46,9 +45,7 @@ let onToggleOverlay = null;
 export function initInput(canvas, hooks) {
     onToggleOverlay = hooks?.onToggleOverlay ?? null;
 
-    const touchMode = matchMedia("(pointer: coarse)").matches;
     canvas.addEventListener("click", () => {
-        if (touchMode) return;
         if (!input.locked) canvas.requestPointerLock();
     });
 
@@ -138,7 +135,6 @@ export function pollInput() {
     if (keys.KeyS || keys.ArrowDown) z -= 1;
     if (keys.KeyD || keys.ArrowRight) x += 1;
     if (keys.KeyA || keys.ArrowLeft) x -= 1;
-    x += touchX; z += touchZ;
 
     // Clamp to a unit disc so diagonals aren't faster.
     const len = Math.sqrt(x * x + z * z);
@@ -150,8 +146,7 @@ export function pollInput() {
     input.moveZ = z;
     input.moving = len > 0.001;
     input.sprint = !!(keys.ShiftLeft || keys.ShiftRight);
-    input.surf = !!(keys.Space || primaryPointerHeld || touchSurf);
-    input.spellHeld2 = !!(keys.Digit2 || touchRibbon);
+    input.surf = !!(keys.Space || primaryPointerHeld);
 }
 
 /** Clear per-frame accumulators. Called at the very end of the frame. */
@@ -165,10 +160,3 @@ export function endFrame() {
 export function isDown(code) {
     return !!keys[code];
 }
-
-/** Mobile HUD bridge: keeps the game systems independent from DOM controls. */
-export function setTouchMove(x, z) { touchX = x; touchZ = z; }
-export function addTouchLook(x, y) { input.lookX += x * LOOK_SCALE; input.lookY += y * LOOK_SCALE; }
-export function setTouchSurf(held) { touchSurf = held; }
-export function setTouchRibbon(held) { touchRibbon = held; if (held) input.spellPressed = 2; }
-export function pressTouchSpell(n) { input.spellPressed = n; }
