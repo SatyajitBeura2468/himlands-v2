@@ -15,9 +15,7 @@ import { Vector3, Color3 } from "@babylonjs/core/Maths/math";
 
 import { S } from "../core/settings.js";
 import { whenReady } from "../core/gpuUtil.js";
-import { CASCADE_COUNT } from "../render/shadows.js";
-
-const _screen = new Vector3();
+import { PLAY_RADIUS } from "../terrain/heightfield.js";
 
 const PALETTE = {
     rock: { albedo: new Color3(0.075, 0.090, 0.115), snow: 0.48, noise: 0.72 },
@@ -25,6 +23,9 @@ const PALETTE = {
     wood: { albedo: new Color3(0.16, 0.095, 0.060), snow: 0.62, noise: 0.95 },
     cloth: { albedo: new Color3(0.62, 0.19, 0.055), snow: 0.10, noise: 1.6 },
     snow: { albedo: new Color3(0.58, 0.68, 0.78), snow: 0.82, noise: 1.8 },
+    grass: { albedo: new Color3(0.36, 0.34, 0.18), snow: 0.18, noise: 2.2 },
+    bush: { albedo: new Color3(0.075, 0.18, 0.16), snow: 0.34, noise: 1.35 },
+    tundra: { albedo: new Color3(0.20, 0.27, 0.22), snow: 0.46, noise: 1.5 },
 };
 
 function baked(mesh, x, y, z, scale = null, rotation = null) {
@@ -87,6 +88,44 @@ function box(scene, name, x, y, z, sx, sy, sz, rotationY = 0) {
     return baked(m, x, y, z, new Vector3(1, 1, 1), new Vector3(0, rotationY, 0));
 }
 
+function grassCluster(scene, x, y, z, height, seed) {
+    const parts = [];
+    for (let i = 0; i < 5; i++) {
+        const blade = MeshBuilder.CreatePlane("alpineGrass", {
+            width: 0.10 + (i % 2) * 0.045,
+            height: height * (0.74 + (i % 3) * 0.12),
+            sideOrientation: 2,
+        }, scene);
+        const yaw = seed * 0.8 + i * (Math.PI / 5);
+        parts.push(baked(
+            blade,
+            x + Math.cos(yaw) * (0.08 + i * 0.025),
+            y + height * (0.37 + (i % 2) * 0.06),
+            z + Math.sin(yaw) * (0.08 + i * 0.025),
+            new Vector3(1, 1, 1),
+            new Vector3(0, yaw, 0)
+        ));
+    }
+    return parts;
+}
+
+function shrubCluster(scene, x, y, z, scale, seed, name = "tundraShrub") {
+    const parts = [];
+    for (let i = 0; i < 3; i++) {
+        const m = MeshBuilder.CreateIcoSphere(name, { radius: 1, subdivisions: 1 }, scene);
+        const yaw = seed * 1.37 + i * 2.1;
+        parts.push(baked(
+            m,
+            x + Math.cos(yaw) * scale * 0.35,
+            y + scale * (0.30 + i * 0.05),
+            z + Math.sin(yaw) * scale * 0.35,
+            new Vector3(scale * (0.75 + i * 0.14), scale * (0.52 + i * 0.10), scale * (0.68 + i * 0.12)),
+            new Vector3(0, yaw, seed * 0.13)
+        ));
+    }
+    return parts;
+}
+
 function merge(scene, meshes, name) {
     if (!meshes.length) return null;
     const merged = Mesh.MergeMeshes(meshes, true, true);
@@ -109,8 +148,9 @@ export class Environment {
         this.meshes = [];
         this.flags = [];
         this.materials = [];
+        this.colliders = [];
+        this.contactPulse = 0;
         this._depthMaterial = null;
-        this._shadowMaterials = [];
         this.triangles = 0;
 
         this._build();
@@ -123,6 +163,9 @@ export class Environment {
         const wood = [];
         const cloth = [];
         const snow = [];
+        const grass = [];
+        const bushes = [];
+        const tundra = [];
 
         // Foreground anchors: enough asymmetry to make the opening camera feel
         // authored, while leaving a clean corridor for the character.
@@ -135,8 +178,10 @@ export class Environment {
         outcrops.forEach((p, i) => {
             const y = this.terrain.heightAt(p[0], p[2]);
             rocks.push(rock(scene, p[0], y + p[4] * 0.22, p[2], p[3], p[4], p[5], i + 1));
+            this._collider(p[0], p[2], Math.max(p[3], p[5]) * 0.68, "outcrop");
             if (i < 6) {
                 rocks.push(rock(scene, p[0] + 2.2, y + 0.4, p[2] + 1.4, p[3] * 0.45, p[4] * 0.38, p[5] * 0.50, i + 9));
+                this._collider(p[0] + 2.2, p[2] + 1.4, Math.max(p[3], p[5]) * 0.28, "outcrop");
             }
         });
 
@@ -153,7 +198,37 @@ export class Environment {
             const h = 5.0 + (i % 4) * 0.9;
             const y = this.terrain.heightAt(x, z);
             trees.push(...pine(scene, x, y, z, h, i + 0.4));
+            this._collider(x, z, 0.72, "juniper");
         });
+
+        // Full-radius ecology pass. The golden-angle distribution avoids rows
+        // and keeps the world deterministic across every run and every machine.
+        for (let i = 0; i < 176; i++) {
+            const a = i * 2.399963 + Math.sin(i * 0.71) * 0.12;
+            const r = 34 + (i % 19) * 30 + Math.sin(i * 1.37) * 8;
+            const x = Math.cos(a) * Math.min(PLAY_RADIUS - 24, r);
+            const z = Math.sin(a) * Math.min(PLAY_RADIUS - 24, r);
+            const y = this.terrain.heightAt(x, z);
+            grass.push(...grassCluster(scene, x, y + 0.01, z, 0.62 + (i % 5) * 0.14, i + 0.3));
+            if (i % 2 === 0) bushes.push(...shrubCluster(scene, x + 1.2, y, z - 0.7, 0.55 + (i % 4) * 0.11, i + 8, "blueJuniper"));
+            if (i % 5 === 0) tundra.push(...shrubCluster(scene, x - 1.4, y, z + 1.1, 0.72 + (i % 3) * 0.12, i + 19));
+            if (i % 7 === 0) {
+                trees.push(...pine(scene, x + 2.2, y, z - 1.5, 3.8 + (i % 4) * 0.45, i + 70));
+                this._collider(x + 2.2, z - 1.5, 0.62, "juniper");
+            }
+        }
+
+        // A looser outer ring reads as a living valley wall instead of a hard
+        // prop boundary. These are smaller and lower contrast by design.
+        for (let i = 0; i < 48; i++) {
+            const a = i * 2.399963 + 0.4;
+            const r = 360 + (i % 9) * 26;
+            const x = Math.cos(a) * Math.min(PLAY_RADIUS - 10, r);
+            const z = Math.sin(a) * Math.min(PLAY_RADIUS - 10, r);
+            const y = this.terrain.heightAt(x, z);
+            grass.push(...grassCluster(scene, x, y, z, 0.42 + (i % 4) * 0.08, i + 101));
+            bushes.push(...shrubCluster(scene, x, y, z, 0.45 + (i % 3) * 0.08, i + 131, "blueJuniper"));
+        }
 
         // Hilltop shrine, built from real boxes and a layered stone base. It is
         // a visual destination rather than a UI marker.
@@ -167,6 +242,7 @@ export class Environment {
         const roofL = box(scene, "shrineRoofL", sx - 0.65, sy + 3.65, sz, 1.75, 0.18, 3.3, -0.14);
         const roofR = box(scene, "shrineRoofR", sx + 0.65, sy + 3.65, sz, 1.75, 0.18, 3.3, 0.14);
         wood.push(roofL, roofR);
+        this._collider(sx, sz, 2.5, "shrine");
 
         // Cairns punctuate the route with a human-scale rhythm.
         for (let i = 0; i < 7; i++) {
@@ -176,6 +252,7 @@ export class Environment {
             for (let k = 0; k < 3 + (i % 2); k++) {
                 rocks.push(rock(scene, x + Math.sin(k * 2.2 + i) * 0.16, y + 0.35 + k * 0.42, z, 0.82 - k * 0.13, 0.26, 0.66 - k * 0.10, 50 + i * 4 + k));
             }
+            this._collider(x, z, 0.72, "cairn");
         }
 
         // Small buried snow pillows soften the prop bases and make them feel
@@ -187,6 +264,8 @@ export class Environment {
             const m = MeshBuilder.CreateIcoSphere("snowPillow", { radius: 1, subdivisions: 2 }, scene);
             snow.push(baked(m, x, y + 0.16, z, new Vector3(1.6 + (i % 3) * 0.35, 0.32, 1.05 + (i % 4) * 0.2), new Vector3(0, i, 0)));
         }
+
+        this._buildArtifacts(scene, wood, rocks, cloth);
 
         // Prayer cloth is deliberately sparse: warm colour in a cool world,
         // but never a neon billboard. These remain separate so wind can move
@@ -208,12 +287,101 @@ export class Environment {
         this._addMerged(merge(scene, trees, "environmentPines"), "tree");
         this._addMerged(merge(scene, wood, "environmentShrine"), "wood");
         this._addMerged(merge(scene, snow, "environmentSnowPillows"), "snow");
+        this._addMerged(merge(scene, grass, "environmentGrass"), "grass");
+        this._addMerged(merge(scene, bushes, "environmentBushes"), "bush");
+        this._addMerged(merge(scene, tundra, "environmentTundra"), "tundra");
+        this._addMerged(merge(scene, cloth, "environmentDistantCloth"), "cloth");
 
         for (const f of this.flags) {
             for (const key of ["pole", "cloth"]) {
                 if (f[key] && !this.meshes.includes(f[key])) this._register(f[key], key === "cloth" ? "cloth" : "wood");
             }
         }
+    }
+
+    _buildArtifacts(scene, wood, rocks, cloth) {
+        const sites = [
+            [-208, 154], [238, 198], [-318, -86], [374, -238],
+            [-458, 18], [492, 286], [-118, -362], [176, -432],
+            [34, 508], [-514, -302],
+        ];
+        sites.forEach(([x, z], i) => {
+            const y = this.terrain.heightAt(x, z);
+            if (i % 4 === 0) {
+                // A small timber shelter with a snow-heavy pitched roof.
+                rocks.push(rock(scene, x - 1.8, y + 0.35, z, 2.1, 0.7, 1.5, 200 + i));
+                rocks.push(rock(scene, x + 1.6, y + 0.42, z + 0.4, 1.7, 0.72, 1.2, 220 + i));
+                wood.push(box(scene, "trailShelterPostA", x - 1.2, y + 1.85, z, 0.22, 2.7, 0.22));
+                wood.push(box(scene, "trailShelterPostB", x + 1.2, y + 1.85, z, 0.22, 2.7, 0.22));
+                wood.push(box(scene, "trailShelterBeam", x, y + 3.0, z, 2.8, 0.22, 0.22));
+                wood.push(box(scene, "trailShelterRoofA", x - 0.55, y + 3.25, z, 1.55, 0.18, 2.8, -0.18));
+                wood.push(box(scene, "trailShelterRoofB", x + 0.55, y + 3.25, z, 1.55, 0.18, 2.8, 0.18));
+                this._collider(x, z, 2.4, "trail shelter");
+            } else if (i % 4 === 1) {
+                // A narrow footbridge / snow crossing: visual artifact and a
+                // solid hand-built obstruction at its ends.
+                for (let k = -3; k <= 3; k++) {
+                    wood.push(box(scene, "bridgePlank", x + k * 0.58, y + 0.42, z, 0.48, 0.16, 3.0, 0.03 * Math.sin(k)));
+                }
+                wood.push(box(scene, "bridgeRailA", x, y + 1.05, z - 1.25, 4.4, 0.12, 0.12));
+                wood.push(box(scene, "bridgeRailB", x, y + 1.05, z + 1.25, 4.4, 0.12, 0.12));
+                this._collider(x - 2.3, z, 0.72, "bridge end");
+                this._collider(x + 2.3, z, 0.72, "bridge end");
+            } else if (i % 4 === 2) {
+                // A half-buried supply sled, a small human trace in a very
+                // large landscape.
+                wood.push(box(scene, "sledBed", x, y + 0.48, z, 2.8, 0.20, 1.1, -0.08));
+                wood.push(box(scene, "sledRail", x - 0.85, y + 0.24, z - 0.55, 3.3, 0.10, 0.10, -0.12));
+                wood.push(box(scene, "sledRail", x - 0.85, y + 0.24, z + 0.55, 3.3, 0.10, 0.10, -0.12));
+                this._collider(x, z, 1.55, "sled");
+            } else {
+                // Low stacked-stone wall and a prayer marker at its shoulder.
+                for (let k = -3; k <= 3; k++) {
+                    rocks.push(rock(scene, x + k * 0.72, y + 0.34 + (Math.abs(k) % 2) * 0.15, z, 0.62, 0.30, 0.40, 260 + i * 8 + k));
+                }
+                const pole = MeshBuilder.CreateCylinder("distantPrayerPole", { diameter: 0.07, height: 3.8, tessellation: 8 }, scene);
+                wood.push(baked(pole, x + 2.5, y + 1.8, z));
+                const marker = MeshBuilder.CreatePlane("distantPrayerCloth", { width: 1.4, height: 0.62, sideOrientation: 2 }, scene);
+                cloth.push(baked(marker, x + 3.15, y + 2.8, z, null, new Vector3(0, Math.PI * 0.5, 0)));
+                this._collider(x, z, 3.4, "stone wall");
+            }
+        });
+    }
+
+    _collider(x, z, radius, kind) {
+        this.colliders.push({ x, z, radius, kind });
+    }
+
+    /**
+     * Resolve the character's proposed horizontal movement against the authored
+     * world. Props use cheap broad-phase circles, while the actual meshes remain
+     * detailed and merged for rendering. Grass and shrubs intentionally have no
+     * hard collider: the player passes through and the shader bends around them.
+     */
+    resolveMotion(current, next, velocity, dt, controller, rig) {
+        let hit = false;
+        for (const obstacle of this.colliders) {
+            const min = obstacle.radius + 0.38;
+            let dx = next.x - obstacle.x;
+            let dz = next.z - obstacle.z;
+            let dist = Math.hypot(dx, dz);
+            if (dist >= min) continue;
+
+            if (dist < 1e-4) {
+                dx = current.x - obstacle.x;
+                dz = current.z - obstacle.z;
+                dist = Math.hypot(dx, dz) || 1;
+            }
+            dx /= dist;
+            dz /= dist;
+            next.x = obstacle.x + dx * (min + 0.04);
+            next.z = obstacle.z + dz * (min + 0.04);
+            velocity.x = 0;
+            velocity.z = 0;
+            hit = true;
+            controller.registerImpact(dx, dz, rig);
+        }
+        this.contactPulse = hit ? 1 : Math.max(0, (this.contactPulse || 0) - dt * 3.5);
     }
 
     _material(kind) {
@@ -225,9 +393,10 @@ export class Environment {
             {
                 attributes: ["position", "normal"],
                 uniforms: [
-                    "viewProjection", "cameraPos", "sunDir", "sunRadiance", "shR",
+                    "viewProjection", "cameraPos", "playerPos", "playerSpeed",
+                    "sunDir", "sunRadiance", "shR",
                     "albedo", "snowTint", "snowAmount", "roughness", "noiseScale", "fogDensity",
-                    "time", "windAmount",
+                    "time", "windAmount", "interactionAmount",
                 ],
                 shaderLanguage: ShaderLanguage.WGSL,
             }
@@ -238,7 +407,9 @@ export class Environment {
         m.setFloat("snowAmount", p.snow);
         m.setFloat("roughness", kind === "cloth" ? 0.68 : 0.86);
         m.setFloat("noiseScale", p.noise);
-        m.setFloat("windAmount", kind === "cloth" ? 0.028 : 0.0);
+        m.setFloat("windAmount", kind === "grass" ? 0.06 : kind === "cloth" ? 0.028 : kind === "bush" ? 0.008 : 0.0);
+        m.setFloat("interactionAmount", kind === "grass" ? 1.0 : kind === "bush" ? 0.35 : 0.0);
+        m.metadata = { environmentKind: kind };
         this.materials.push(m);
         return m;
     }
@@ -289,10 +460,12 @@ export class Environment {
         await whenReady(this._depthMaterial, "environment depth");
     }
 
-    update(time) {
+    update(time, character) {
         // Shared uniforms are published once per frame per material.
         for (const m of this.materials) {
             m.setVector3("cameraPos", this.scene.activeCamera.position);
+            m.setVector3("playerPos", character.position);
+            m.setFloat("playerSpeed", character.speed);
             m.setVector3("sunDir", this.sky.sunDir);
             m.setColor3("sunRadiance", this.sky.sunRadiance);
             m.setArray4("shR", this.sky.sh);

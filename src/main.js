@@ -136,7 +136,7 @@ async function boot() {
 
     await loading.phase("welcoming the wanderer");
 
-    const character = new CharacterController(terrain);
+    const character = new CharacterController(terrain, environment);
     character.position.copyFrom(START_POSITION);
     character.position.y = terrain.heightAt(START_POSITION.x, START_POSITION.z);
 
@@ -259,7 +259,7 @@ async function boot() {
         audio.update(dt, character, figure.figure);
         const tSpells = performance.now();
         terrain.update(rig.camera.position, character.position, dt);
-        environment.update(time);
+        environment.update(time, character);
         const tTerrain = performance.now();
         // After the shadow refit, so the figure's uniforms carry this frame's
         // cascade matrices rather than last frame's.
@@ -285,6 +285,7 @@ async function boot() {
         endFrameDraws();
         stats.triangles =
             (terrain.mesh.metadata ? terrain.mesh.metadata.triangles : 0) +
+            environment.triangles +
             (S.showCharacter ? figure.triangles : 0) +
             (wake.mesh.isVisible ? wake.mesh.metadata.triangles : 0) +
             spells.triangles +

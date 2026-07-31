@@ -22,6 +22,7 @@ const _wish = new Vector3();
 const _fwd = new Vector3();
 const _right = new Vector3();
 const _tmp = new Vector3();
+const _next = new Vector3();
 const _n = new Vector3();
 
 const WALK_SPEED = 2.5;
@@ -42,8 +43,9 @@ export class CharacterController {
     /**
      * @param {{ heightAt(x:number,z:number):number, normalAt(x:number,z:number,out:Vector3):Vector3 }} terrain
      */
-    constructor(terrain) {
+    constructor(terrain, world = null) {
         this.terrain = terrain;
+        this.world = world;
 
         this.position = new Vector3(0, 0, 0);
         this.velocity = new Vector3(0, 0, 0);
@@ -105,6 +107,13 @@ export class CharacterController {
         this.groundNormal = new Vector3(0, 1, 0);
 
         this._prevSpeed = 0;
+
+        // A hard-world impact is deliberately short and readable: movement
+        // stops, the camera gets a small impulse, and the procedural figure
+        // can stagger for a few frames instead of clipping through geometry.
+        this.hurt = 0;
+        this.impactSide = 0;
+        this._impactCooldown = 0;
     }
 
     /**
@@ -113,6 +122,9 @@ export class CharacterController {
      */
     update(dt, rig) {
         const h = Math.min(dt, 1 / 30);
+
+        this.hurt = Math.max(0, this.hurt - h * 3.8);
+        this._impactCooldown = Math.max(0, this._impactCooldown - h);
 
         this.prevVelocity.copyFrom(this.velocity);
         this.surfActive = input.surf;
@@ -127,8 +139,14 @@ export class CharacterController {
         else this._walkStep(h);
 
         // ---------------------------------------------------- integrate + snap
-        this.position.x += this.velocity.x * h;
-        this.position.z += this.velocity.z * h;
+        _next.set(
+            this.position.x + this.velocity.x * h,
+            this.position.y,
+            this.position.z + this.velocity.z * h
+        );
+        this.world?.resolveMotion(this.position, _next, this.velocity, h, this, rig);
+        this.position.x = _next.x;
+        this.position.z = _next.z;
 
         this.groundY = this.terrain.heightAt(this.position.x, this.position.z);
         this.terrain.normalAt(this.position.x, this.position.z, this.groundNormal);
@@ -153,6 +171,17 @@ export class CharacterController {
         this.streak01 = this.surf * Scalar.Clamp((this.speed - 7) / 11, 0, 1);
 
         this._gait(h);
+    }
+
+    /** Called by the world when a hard prop absorbs a step or a surf run. */
+    registerImpact(nx, nz, rig) {
+        if (this._impactCooldown > 0) return;
+        this.hurt = 1;
+        const rx = Math.cos(this.facing);
+        const rz = -Math.sin(this.facing);
+        this.impactSide = Math.max(-1, Math.min(1, nx * rx + nz * rz));
+        this._impactCooldown = 0.24;
+        rig?.addTrauma(0.22);
     }
 
     _walkStep(h) {
