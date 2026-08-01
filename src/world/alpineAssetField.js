@@ -26,6 +26,12 @@ function bakeImportedMeshes(result) {
         const material = mesh.material;
         const world = mesh.getWorldMatrix().clone();
         mesh.bakeTransformIntoVertices(world);
+        // Babylon's glTF root converts handedness with a negative determinant.
+        // Baking that reflection into vertices reverses triangle winding; once
+        // the root is removed, ordinary back-face culling would make the full
+        // scanned asset disappear. Restore the winding once in source geometry
+        // instead of paying for double-sided rendering on every instance.
+        if (world.determinant() < 0) mesh.flipFaces(false);
         resetTransform(mesh);
         // glTF primitives that share a material may still expose different
         // vertex streams (for example, one has tangents and another does not).
@@ -91,8 +97,8 @@ export class AlpineAssetField {
     async _loadAsset(slug, spec) {
         const result = await SceneLoader.ImportMeshAsync(
             "",
-            "/models/" + slug + "/",
-            "runtime.glb",
+            "/models/" + (spec.folder || slug) + "/",
+            spec.file || "runtime.glb",
             this.scene
         );
         this.sourceRoots.push(...result.meshes);
@@ -126,15 +132,21 @@ export class AlpineAssetField {
             source.setEnabled(true);
             this.sources.push(source);
 
-            const material = this.host.materialFromAsset(spec.kind, sourceMaterial, slug);
+            // Preserve the glTF's authored PBR material, including its native
+            // normal/roughness/alpha configuration. The previous conversion to
+            // a generic shader discarded exactly the microsurface response that
+            // makes these scans read as bark, needles, stone and dry vegetation.
+            const material = this.host.prepareAssetMaterial(sourceMaterial, spec.kind, slug);
             source.material = material;
             const chunks = [];
             let sourcePlaced = false;
             for (let chunkIndex = 0; chunkIndex < relevantChunks.length; chunkIndex++) {
                 const chunk = relevantChunks[chunkIndex];
+                const placements = chunk.placements;
+                if (!placements.length) continue;
                 const nodes = [];
-                for (let i = 0; i < chunk.placements.length; i++) {
-                    const p = chunk.placements[i];
+                for (let i = 0; i < placements.length; i++) {
+                    const p = placements[i];
                     let node;
                     if (!sourcePlaced) {
                         node = source;
@@ -154,8 +166,8 @@ export class AlpineAssetField {
                     node.renderingGroupId = 1;
                 }
                 chunks.push({ x: chunk.x, z: chunk.z, nodes, visible: true });
-                if (sourceIndex === 0) this.instanceCount += chunk.placements.length;
-                this.triangles += (source.getTotalIndices() / 3) * chunk.placements.length;
+                if (sourceIndex === 0) this.instanceCount += placements.length;
+                this.triangles += (source.getTotalIndices() / 3) * placements.length;
             }
             this.host.registerAssetMesh(source, spec.kind, sourceMaterial);
             this.groups.push({

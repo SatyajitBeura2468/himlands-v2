@@ -23,4 +23,6 @@ HIMLANDS V2 locally bundles the following environment resources from [Poly Haven
 - `rock_moss_set_01` - clustered stone detail
 - `namaqualand_stones_01` - varied ground-stone scatter
 
-All model geometry and textures are stored as full-resolution, pre-flattened runtime GLB packages under `public/models/`, so the runtime does not rely on third-party requests or spend the opening sequence merging source scenes. The geometry was not simplified. The imported resources are integrated through the custom HIMLANDS WebGPU material, snow, fog, lighting, depth, and shadow systems.
+The original full-resolution GLB packages are preserved under `public/models/`. Derived `runtime-lod.glb` copies reduce geometry only where screen-space detail cannot resolve the source mesh; all authored 1K PBR textures, normal maps, roughness maps, silhouettes, and materials remain intact. The nearest hero firs continue to use the complete 514k-vertex source mesh. LODs were generated with glTF Transform's meshoptimizer-based simplifier and validated against the glTF specification.
+
+All resources are bundled locally, so the runtime makes no third-party asset requests. Imported geometry retains its authored PBR materials and is integrated with dedicated alpine sun/fill lighting, terrain-aware placement, streaming, depth, collision, and interaction systems.

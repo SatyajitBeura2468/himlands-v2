@@ -4,18 +4,22 @@ import { PLAY_RADIUS } from "../terrain/heightfield.js";
 export const BIOME_CELL_SIZE = 72;
 
 export const ASSET_SPECS = {
-    fir_sapling: { kind: "foliage", maxDistance: 82, chunkCells: 1 },
-    grass_medium_01: { kind: "grass", maxDistance: 46, chunkCells: 1 },
-    shrub_02: { kind: "bush", maxDistance: 54, chunkCells: 1 },
-    shrub_03: { kind: "tundra", maxDistance: 50, chunkCells: 1 },
-    boulder_01: { kind: "rock", maxDistance: 110, chunkCells: 1 },
-    rock_07: { kind: "rock", maxDistance: 58, chunkCells: 1 },
-    stone_01: { kind: "rock", maxDistance: 48, chunkCells: 1 },
-    tree_stump_01: { kind: "wood", maxDistance: 68, chunkCells: 1 },
-    pine_roots: { kind: "wood", maxDistance: 64, chunkCells: 1 },
-    modular_wooden_pier: { kind: "wood", maxDistance: 360, chunkCells: 1 },
-    rock_moss_set_01: { kind: "rock", maxDistance: 76, chunkCells: 1 },
-    namaqualand_stones_01: { kind: "rock", maxDistance: 50, chunkCells: 1 },
+    // The camera reads far beyond the old 46-82 m streaming ring. Keeping the
+    // production assets alive through the middle distance is what turns the
+    // valley from isolated props into a continuous biome.
+    fir_sapling: { kind: "foliage", maxDistance: 172, chunkCells: 1, folder: "fir_sapling", file: "runtime-lod.glb" },
+    fir_sapling_hero: { kind: "foliage", maxDistance: 64, chunkCells: 1, folder: "fir_sapling", file: "runtime.glb" },
+    grass_medium_01: { kind: "grass", maxDistance: 62, chunkCells: 1, file: "runtime-lod.glb" },
+    shrub_02: { kind: "bush", maxDistance: 82, chunkCells: 1, file: "runtime-lod.glb" },
+    shrub_03: { kind: "tundra", maxDistance: 76, chunkCells: 1, file: "runtime-lod.glb" },
+    boulder_01: { kind: "rock", maxDistance: 132, chunkCells: 1, file: "runtime-lod.glb" },
+    rock_07: { kind: "rock", maxDistance: 84, chunkCells: 1, file: "runtime-lod.glb" },
+    stone_01: { kind: "rock", maxDistance: 68, chunkCells: 1, file: "runtime-lod.glb" },
+    tree_stump_01: { kind: "wood", maxDistance: 86, chunkCells: 1, file: "runtime-lod.glb" },
+    pine_roots: { kind: "wood", maxDistance: 82, chunkCells: 1, file: "runtime-lod.glb" },
+    modular_wooden_pier: { kind: "wood", maxDistance: 360, chunkCells: 1, file: "runtime-lod.glb" },
+    rock_moss_set_01: { kind: "rock", maxDistance: 96, chunkCells: 1, file: "runtime-lod.glb" },
+    namaqualand_stones_01: { kind: "rock", maxDistance: 72, chunkCells: 1, file: "runtime-lod.glb" },
 };
 
 function hash32(x) {
@@ -200,8 +204,8 @@ export function buildBiomeDistribution(terrain) {
 
             // High-detail conifers are deliberately irregular: sheltered cells
             // carry groves, exposed ridges carry only a few wind-cut saplings.
-            const treeChance = Math.max(0.24, 0.88 - slope * 2.4 - exposed * 0.20);
-            const treeCount = random() < treeChance ? 1 + Math.floor(random() * 2) : 0;
+            const treeChance = Math.max(0.30, 0.94 - slope * 2.15 - exposed * 0.16);
+            const treeCount = random() < treeChance ? 2 + Math.floor(random() * 4) : 0;
             for (let i = 0; i < treeCount; i++) {
                 const [x, z] = scatterPoint(cx, cz, random);
                 const scale = 2.7 + random() * 2.45;
@@ -282,22 +286,25 @@ export function buildBiomeDistribution(terrain) {
                     });
             }
         }
-        if (band > 1) {
+        if (band > 0) {
             for (const side of [-1, 1]) {
-                const lateral = side * (width * 0.72 + openingRandom() * 5);
-                const x = -2 + forwardX * distance + rightX * lateral;
-                const z = forwardZ * distance + rightZ * lateral;
-                const cx = Math.floor(x / BIOME_CELL_SIZE);
-                const cz = Math.floor(z / BIOME_CELL_SIZE);
-                add(cx, cz, "fir_sapling", x, z, 3.4 + openingRandom() * 2.2,
-                    openingRandom() * Math.PI * 2, {
-                        sink: -0.06,
-                        hard: true,
-                        rx: 0.12,
-                        rz: 0.12,
-                        kind: "pine trunk",
-                        stretchY: 0.95 + openingRandom() * 0.18,
-                    });
+                for (let grove = 0; grove < 3; grove++) {
+                    const lateral = side * (width * (0.48 + grove * 0.19) + openingRandom() * 4.5);
+                    const along = distance + (grove - 1) * 3.8 + (openingRandom() - 0.5) * 5;
+                    const x = -2 + forwardX * along + rightX * lateral;
+                    const z = forwardZ * along + rightZ * lateral;
+                    const cx = Math.floor(x / BIOME_CELL_SIZE);
+                    const cz = Math.floor(z / BIOME_CELL_SIZE);
+                    add(cx, cz, "fir_sapling", x, z, 4.2 + openingRandom() * 3.1,
+                        openingRandom() * Math.PI * 2, {
+                            sink: -0.06,
+                            hard: true,
+                            rx: 0.12,
+                            rz: 0.12,
+                            kind: "pine trunk",
+                            stretchY: 0.92 + openingRandom() * 0.23,
+                        });
+                }
             }
         }
     }
@@ -341,12 +348,12 @@ export function buildBiomeDistribution(terrain) {
                     });
             }
         }
-        if (anchorIndex <= 6) {
+        if (anchorIndex <= 10) {
             const treeOffset = (anchorIndex % 2 ? 1 : -1) * (4.8 + openingRandom() * 2.4);
             const treeX = anchorX + rightX * treeOffset;
             const treeZ = anchorZ + rightZ * treeOffset;
             add(Math.floor(treeX / BIOME_CELL_SIZE), Math.floor(treeZ / BIOME_CELL_SIZE), "fir_sapling", treeX, treeZ,
-                4.6 + openingRandom() * 1.7, openingRandom() * Math.PI * 2, {
+                4.8 + openingRandom() * 2.8, openingRandom() * Math.PI * 2, {
                     sink: -0.025,
                     hard: true,
                     rx: 0.12,
@@ -357,10 +364,37 @@ export function buildBiomeDistribution(terrain) {
         }
     });
 
+    // A hand-composed irregular fir belt frames the opening without relying on
+    // synthetic cone or blob silhouettes. The closest pair retains the complete
+    // 514k-vertex scan; the remaining trees use a screen-space LOD generated
+    // from that same scan, with enough spacing to preserve playable routes.
+    const openingFirs = [
+        [8.5, -11.5, 6.3], [20.5, -22.5, 7.1], [5.2, -34.8, 5.8],
+        [24.5, -45.2, 7.6], [39.5, -57.5, 6.8], [2.8, -57.0, 6.4],
+        [12.0, -72.0, 8.1], [48.0, -69.0, 8.5], [-7.5, -42.0, 5.9],
+        [-18.0, -28.0, 5.4], [33.0, -18.0, 5.8], [45.0, -34.0, 7.0],
+        [-24.0, -53.0, 6.7], [57.0, -48.0, 7.8], [-35.0, -72.0, 7.4],
+        [68.0, -82.0, 8.3], [-16.0, -92.0, 7.9], [42.0, -104.0, 8.7],
+        [76.0, -116.0, 7.5], [-48.0, -120.0, 8.1], [18.0, -132.0, 7.2],
+    ];
+    openingFirs.forEach(([x, z, scale], index) => {
+        add(Math.floor(x / BIOME_CELL_SIZE), Math.floor(z / BIOME_CELL_SIZE),
+            index < 2 ? "fir_sapling_hero" : "fir_sapling", x, z, scale, index * 2.3999632297, {
+                sink: -0.07,
+                hard: true,
+                rx: 0.12,
+                rz: 0.12,
+                kind: "mature fir trunk",
+                stretchX: 0.88 + (index % 4) * 0.055,
+                stretchY: 0.94 + (index % 5) * 0.045,
+                stretchZ: 0.90 + (index % 3) * 0.07,
+            });
+    });
+
     // Thirteen authored crossings create recognisable navigation landmarks. The
     // source is a detailed modular timber pier, sunk and scaled into footbridges.
     const crossings = [
-        [15.7, -63.3, 0.72], [-78, 84, 0.25], [96, 146, -0.42], [-188, 214, 1.1], [224, 264, -0.8],
+        [13.0, -47.0, 0.72], [-78, 84, 0.25], [96, 146, -0.42], [-188, 214, 1.1], [224, 264, -0.8],
         [-292, 64, 0.62], [338, -96, 1.35], [-402, -188, 0.18], [456, 128, -1.18],
         [-122, -348, 0.86], [174, -438, -0.55], [24, 492, 1.42], [-486, 294, -0.25],
     ];

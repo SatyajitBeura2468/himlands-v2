@@ -14,6 +14,8 @@ import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { Constants } from "@babylonjs/core/Engines/constants";
 import { Vector3, Color3 } from "@babylonjs/core/Maths/math";
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 
 import { S } from "../core/settings.js";
 import { whenReady } from "../core/gpuUtil.js";
@@ -117,6 +119,7 @@ export class Environment {
         this.materials = [];
         this.materialMeshes = new Map();
         this.materialCache = new Map();
+        this.nativeAssetMaterials = new Set();
         this.textureSets = new Map();
         this.colliders = [];
         this.softContacts = [];
@@ -131,6 +134,16 @@ export class Environment {
     }
 
     async build() {
+        // The snow, character and effects retain their authored WGSL lighting.
+        // These two lights exist only for the native PBR scan materials.
+        this.assetFill = new HemisphericLight("alpineAssetFill", new Vector3(0, 1, 0), this.scene);
+        this.assetFill.intensity = 0.72;
+        this.assetFill.diffuse = new Color3(0.68, 0.76, 0.84);
+        this.assetFill.groundColor = new Color3(0.13, 0.17, 0.22);
+        this.assetSun = new DirectionalLight("alpineAssetSun", this.sky.sunDir.scale(-1), this.scene);
+        this.assetSun.intensity = 2.15;
+        this.assetSun.diffuse = new Color3(1.0, 0.89, 0.72);
+
         const distribution = buildBiomeDistribution(this.terrain);
         this.colliders.push(...distribution.hard);
         this.softContacts.push(...distribution.soft);
@@ -156,58 +169,6 @@ export class Environment {
         const rocks = [];
         const snow = [];
         const cloth = [];
-        const foliage = [];
-
-        // Dense, high-geometry hero conifers occupy terrain points verified in
-        // the production camera. The scanned fir instances continue through
-        // the wider world; these layered crowns provide the strong near/mid
-        // silhouettes that individual sapling cards lose against bright snow.
-        const heroPines = [
-            [8.5, -11.5, 8.2], [20.5, -22.5, 9.4], [5.2, -34.8, 7.6],
-            [24.5, -45.2, 10.2], [39.5, -57.5, 9.0], [2.8, -57.0, 8.6],
-            [12.0, -72.0, 10.8], [48.0, -69.0, 11.4], [-7.5, -42.0, 7.8],
-        ];
-        heroPines.forEach(([x, z, height], treeIndex) => {
-            const y = this.terrain.heightAt(x, z);
-            wood.push(timber(scene, "heroPineTrunk", x, y + height * 0.46, z, height * 0.92, 0.20 + height * 0.014));
-            const layers = 18;
-            for (let layer = 0; layer < layers; layer++) {
-                const t = layer / (layers - 1);
-                const irregular = 1 + Math.sin(treeIndex * 4.17 + layer * 2.31) * 0.12;
-                const layerY = y + 1.15 + t * height * 0.88 + Math.sin(layer * 3.7 + treeIndex) * 0.11;
-                const radius = (1 - t * 0.86) * (1.70 + height * 0.082) * irregular;
-                const lobes = t > 0.78 ? 3 : 4;
-                for (let lobe = 0; lobe < lobes; lobe++) {
-                    const angle = treeIndex * 1.71 + layer * 2.17 + lobe * (Math.PI * 2 / lobes)
-                        + Math.sin(layer * 7.1 + lobe * 2.9) * 0.19;
-                    const crown = MeshBuilder.CreateIcoSphere("heroPineBranchMass", {
-                        radius: 1,
-                        subdivisions: 3,
-                    }, scene);
-                    foliage.push(baked(
-                        crown,
-                        x + Math.cos(angle) * radius * 0.38,
-                        layerY + Math.sin(angle * 2.3) * 0.16,
-                        z + Math.sin(angle) * radius * 0.38,
-                        new Vector3(radius * (0.58 + 0.08 * Math.sin(angle)), 0.22 + radius * 0.10, radius * 0.22),
-                        new Vector3(0.12 * Math.sin(angle), angle, 0.18 * Math.cos(angle))
-                    ));
-                }
-                const core = MeshBuilder.CreateIcoSphere("heroPineCrownCore", {
-                    radius: 1,
-                    subdivisions: 3,
-                }, scene);
-                foliage.push(baked(
-                    core,
-                    x + Math.sin(layer * 2.8) * radius * 0.08,
-                    layerY,
-                    z + Math.cos(layer * 3.1) * radius * 0.08,
-                    new Vector3(radius * 0.42, 0.36 + radius * 0.10, radius * 0.42),
-                    new Vector3(layer * 0.07, layer * 1.31, treeIndex * 0.05)
-                ));
-            }
-            this._collider(x, z, 0.34, 0.34, 0, "mature fir trunk");
-        });
 
         // Weathered log shelters. Each is built from round, tapered timbers and
         // individually overlapped roof boards rather than box silhouettes.
@@ -325,7 +286,6 @@ export class Environment {
         this._addMerged(merge(rocks, "landmarkStonework"), "rock");
         this._addMerged(merge(snow, "landmarkSnowCaps"), "snow");
         this._addMerged(merge(cloth, "landmarkPrayerCloth"), "cloth");
-        this._addMerged(merge(foliage, "heroConiferCanopy"), "foliage");
     }
 
     _buildPrayerMarker(x, z, groundY, yaw, wood, cloth) {
@@ -455,6 +415,17 @@ export class Environment {
         return material;
     }
 
+    prepareAssetMaterial(material, kind, slug) {
+        if (!material) return this._material(kind, null, "asset-fallback-" + slug);
+        material.name = "scan-" + slug + "-" + material.uniqueId;
+        material.backFaceCulling = true;
+        if ("metallic" in material) material.metallic = Math.min(material.metallic ?? 0, 0.08);
+        if ("roughness" in material) material.roughness = Math.max(material.roughness ?? 0.72, 0.56);
+        if ("environmentIntensity" in material) material.environmentIntensity = 0.42;
+        this.nativeAssetMaterials.add(material);
+        return material;
+    }
+
     registerAssetMesh(mesh, kind) {
         this.meshes.push(mesh);
         this.materialMeshes.set(mesh.material, mesh);
@@ -571,6 +542,10 @@ export class Environment {
     }
 
     async warmUp() {
+        for (const material of this.nativeAssetMaterials) {
+            const mesh = this.meshes.find((candidate) => candidate.material === material);
+            if (mesh) await whenReady(material, "scan:" + material.name, [mesh, !!mesh.instances?.length]);
+        }
         for (const material of this.materials) {
             const mesh = this.materialMeshes.get(material);
             if (mesh) {
@@ -608,11 +583,14 @@ export class Environment {
         this.assetField?.dispose();
         for (const mesh of this.meshes) mesh.dispose(false, false);
         for (const material of this.materials) material.dispose(false, false);
+        for (const material of this.nativeAssetMaterials) material.dispose(false, false);
         for (const textures of this.textureSets.values()) {
             textures.albedo.dispose();
             textures.normal.dispose();
             textures.rough.dispose();
         }
         this._depthMaterial?.dispose();
+        this.assetFill?.dispose();
+        this.assetSun?.dispose();
     }
 }
