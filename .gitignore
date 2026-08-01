@@ -24,3 +24,6 @@ Thumbs.db
 *.webp
 *.mp4
 *.webm
+
+# Curated repository visuals used by the public project page
+!assets/readme/*.png
