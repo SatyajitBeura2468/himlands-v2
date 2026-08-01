@@ -1,5 +1,5 @@
 /**
- * SNOWFLOW — entry point and frame orchestration.
+ * HIMLANDS — entry point and frame orchestration.
  *
  * WebGPU only, by design. No WebGL path, no feature-detect branches: if the
  * adapter isn't there we say so once and stop.
@@ -74,7 +74,7 @@ async function boot() {
     // this feature. Every desktop GPU that can run this demo has it.
     const filterable = engine.getCaps().textureFloatLinearFiltering;
     if (!filterable) {
-        console.warn("[snowflow] float32-filterable unavailable; height will step");
+        console.warn("[himlands] float32-filterable unavailable; height will step");
     }
 
     const applyScale = () => engine.setHardwareScalingLevel(1 / S.resolutionScale);
@@ -302,7 +302,8 @@ async function boot() {
     await loading.done();
     setTimeout(() => overlay.resetSpikes(), 800);
 
-    globalThis.SNOWFLOW = {
+    // HIMLANDS_DEBUG is a development/debug inspection surface.
+    globalThis.HIMLANDS_DEBUG = {
         engine, scene, rig, character, figure, contact, spray, wake, spells, audio,
         overlay, terrain, environment, sky, shadows, post, depthPass,
         S, input, perfStats: stats,
