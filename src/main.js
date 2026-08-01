@@ -128,11 +128,12 @@ async function boot() {
     onChange("showTerrain", (v) => (terrain.mesh.isVisible = v));
     depthPass.registerCaster(terrain.mesh, terrain.makePrepassMaterial());
 
-    // A compact authored world layer around the procedural field: pines,
-    // slate outcrops, cairns, a shrine and sparse prayer cloth. It uses the
-    // same sun/sky radiance and the same custom depth/shadow infrastructure.
-    await loading.phase("setting stones along the high trail");
+    // A streamed, production-density alpine world: scanned vegetation, stones,
+    // boulders and timber modules, plus authored trail landmarks. Everything
+    // still shares the snowfield's light, depth and shadow infrastructure.
+    await loading.phase("growing the living Himalayan valley");
     const environment = new Environment(scene, terrain, sky, shadows, depthPass);
+    await environment.build();
 
     await loading.phase("welcoming the wanderer");
 

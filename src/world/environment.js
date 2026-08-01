@@ -1,10 +1,10 @@
 /**
- * The living world around the wanderer.
+ * Dense alpine world production layer.
  *
- * The terrain is intentionally open and procedural. This layer gives the eye
- * a readable foreground, mid-ground and landmark rhythm without replacing the
- * snow renderer: every prop is baked to world space, shaded through the same
- * sunrise radiance, and participates in the custom depth/shadow passes.
+ * Natural detail comes from locally bundled, high-resolution CC0 models and is
+ * streamed in terrain cells. Hand-built trail artifacts remain deliberately
+ * authored so the procedural valley has memorable destinations and navigation
+ * rhythm instead of becoming an undifferentiated asset scatter.
  */
 
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
@@ -17,7 +17,8 @@ import { Vector3, Color3 } from "@babylonjs/core/Maths/math";
 
 import { S } from "../core/settings.js";
 import { whenReady } from "../core/gpuUtil.js";
-import { PLAY_RADIUS } from "../terrain/heightfield.js";
+import { AlpineAssetField } from "./alpineAssetField.js";
+import { BIOME_CELL_SIZE, buildBiomeDistribution } from "./biomeDistribution.js";
 
 import rockAlbedoUrl from "../assets/world/rock-diff.jpg";
 import rockNormalUrl from "../assets/world/rock-normal.jpg";
@@ -33,15 +34,15 @@ import groundNormalUrl from "../assets/world/ground-normal.jpg";
 import groundRoughUrl from "../assets/world/ground-rough.jpg";
 
 const PALETTE = {
-    rock: { albedo: new Color3(0.18, 0.20, 0.24), snow: 0.54, noise: 0.72, scale: 1.35, texture: "rock" },
-    tree: { albedo: new Color3(0.16, 0.25, 0.19), snow: 0.32, noise: 1.1, scale: 2.6, texture: "bark" },
-    foliage: { albedo: new Color3(0.075, 0.18, 0.105), snow: 0.38, noise: 1.65, scale: 4.8, texture: "ground" },
-    wood: { albedo: new Color3(0.35, 0.22, 0.12), snow: 0.68, noise: 0.95, scale: 1.8, texture: "wood" },
-    cloth: { albedo: new Color3(0.62, 0.19, 0.055), snow: 0.10, noise: 1.6, scale: 2.0, texture: "wood" },
-    snow: { albedo: new Color3(0.78, 0.84, 0.90), snow: 0.90, noise: 1.8, scale: 2.0, texture: "ground" },
-    grass: { albedo: new Color3(0.48, 0.39, 0.17), snow: 0.20, noise: 2.2, scale: 3.0, texture: "ground" },
-    bush: { albedo: new Color3(0.10, 0.28, 0.21), snow: 0.38, noise: 1.35, scale: 2.4, texture: "ground" },
-    tundra: { albedo: new Color3(0.26, 0.34, 0.25), snow: 0.50, noise: 1.5, scale: 2.8, texture: "ground" },
+    rock: { albedo: new Color3(0.72, 0.76, 0.82), snow: 0.58, noise: 0.72, scale: 1.35, texture: "rock" },
+    tree: { albedo: new Color3(0.68, 0.72, 0.68), snow: 0.34, noise: 1.1, scale: 2.2, texture: "bark" },
+    foliage: { albedo: new Color3(0.55, 0.72, 0.58), snow: 0.46, noise: 1.65, scale: 1.0, texture: "ground" },
+    wood: { albedo: new Color3(0.82, 0.74, 0.66), snow: 0.66, noise: 0.95, scale: 1.4, texture: "wood" },
+    cloth: { albedo: new Color3(0.78, 0.36, 0.18), snow: 0.10, noise: 1.6, scale: 1.0, texture: "wood" },
+    snow: { albedo: new Color3(0.92, 0.96, 1.0), snow: 0.94, noise: 1.8, scale: 1.5, texture: "ground" },
+    grass: { albedo: new Color3(0.72, 0.66, 0.42), snow: 0.24, noise: 2.2, scale: 1.0, texture: "ground" },
+    bush: { albedo: new Color3(0.62, 0.78, 0.68), snow: 0.44, noise: 1.35, scale: 1.0, texture: "ground" },
+    tundra: { albedo: new Color3(0.68, 0.72, 0.52), snow: 0.36, noise: 1.5, scale: 1.0, texture: "ground" },
 };
 
 const TEXTURE_URLS = {
@@ -65,92 +66,35 @@ function baked(mesh, x, y, z, scale = null, rotation = null) {
     return mesh;
 }
 
-function rock(scene, x, y, z, sx, sy, sz, seed) {
-    const m = MeshBuilder.CreateIcoSphere("slateOutcrop", {
-        radius: 1,
-        subdivisions: 3,
-    }, scene);
-    const yaw = (seed * 1.71) % (Math.PI * 2);
-    return baked(m, x, y, z, new Vector3(sx, sy, sz), new Vector3(0, yaw, seed * 0.33));
-}
-
-function pine(scene, x, y, z, height, seed) {
-    const trunkParts = [];
-    const foliageParts = [];
-    const trunk = MeshBuilder.CreateCylinder("juniperTrunk", {
-        diameterTop: 0.18,
-        diameterBottom: 0.34,
-        height: height * 0.62,
-        tessellation: 16,
-    }, scene);
-    trunkParts.push(baked(trunk, x, y + height * 0.31, z));
-
-    const tiers = 8;
-    for (let i = 0; i < tiers; i++) {
-        const t = i / (tiers - 1);
-        const cone = MeshBuilder.CreateCylinder("juniperBough", {
-            diameterTop: 0.08,
-            diameterBottom: height * (0.30 - t * 0.035),
-            height: height * (0.20 - t * 0.010),
-            tessellation: 14,
-        }, scene);
-        const sway = Math.sin(seed * 3.1 + i * 1.7) * 0.08;
-        foliageParts.push(baked(
-            cone,
-            x + sway * (1 - t),
-            y + height * (0.38 + t * 0.42),
-            z + Math.cos(seed + i) * 0.06,
-            new Vector3(1, 1, 1),
-            new Vector3(0, seed * 0.45, 0)
-        ));
-    }
-    return { trunkParts, foliageParts };
-}
-
 function box(scene, name, x, y, z, sx, sy, sz, rotationY = 0) {
-    const m = MeshBuilder.CreateBox(name, { width: sx, height: sy, depth: sz }, scene);
-    return baked(m, x, y, z, new Vector3(1, 1, 1), new Vector3(0, rotationY, 0));
+    const mesh = MeshBuilder.CreateBox(name, { width: sx, height: sy, depth: sz }, scene);
+    return baked(mesh, x, y, z, null, new Vector3(0, rotationY, 0));
 }
 
-function grassCluster(scene, x, y, z, height, seed) {
-    const parts = [];
-    for (let i = 0; i < 8; i++) {
-        const blade = MeshBuilder.CreatePlane("alpineGrass", {
-            width: 0.10 + (i % 2) * 0.045,
-            height: height * (0.74 + (i % 3) * 0.12),
-            sideOrientation: 2,
-        }, scene);
-        const yaw = seed * 0.8 + i * (Math.PI / 5);
-        parts.push(baked(
-            blade,
-            x + Math.cos(yaw) * (0.08 + i * 0.025),
-            y + height * (0.37 + (i % 2) * 0.06),
-            z + Math.sin(yaw) * (0.08 + i * 0.025),
-            new Vector3(1, 1, 1),
-            new Vector3(0, yaw, 0)
-        ));
-    }
-    return parts;
+function timber(scene, name, x, y, z, length, radius, yaw = 0, horizontal = false) {
+    const mesh = MeshBuilder.CreateCylinder(name, {
+        height: length,
+        diameterTop: radius * 1.72,
+        diameterBottom: radius * 2,
+        tessellation: 20,
+        subdivisions: 2,
+    }, scene);
+    return baked(mesh, x, y, z, null, horizontal
+        ? new Vector3(0, yaw, Math.PI * 0.5)
+        : new Vector3(0, yaw, 0));
 }
 
-function shrubCluster(scene, x, y, z, scale, seed, name = "tundraShrub") {
-    const parts = [];
-    for (let i = 0; i < 3; i++) {
-        const m = MeshBuilder.CreateIcoSphere(name, { radius: 1, subdivisions: 2 }, scene);
-        const yaw = seed * 1.37 + i * 2.1;
-        parts.push(baked(
-            m,
-            x + Math.cos(yaw) * scale * 0.35,
-            y + scale * (0.30 + i * 0.05),
-            z + Math.sin(yaw) * scale * 0.35,
-            new Vector3(scale * (0.75 + i * 0.14), scale * (0.52 + i * 0.10), scale * (0.68 + i * 0.12)),
-            new Vector3(0, yaw, seed * 0.13)
-        ));
-    }
-    return parts;
+function stone(scene, x, y, z, sx, sy, sz, seed) {
+    const mesh = MeshBuilder.CreateIcoSphere("handStackedStone", { radius: 1, subdivisions: 4 }, scene);
+    return baked(
+        mesh,
+        x, y, z,
+        new Vector3(sx, sy, sz),
+        new Vector3(seed * 0.17, seed * 1.37, seed * 0.11)
+    );
 }
 
-function merge(scene, meshes, name) {
+function merge(meshes, name) {
     if (!meshes.length) return null;
     const merged = Mesh.MergeMeshes(meshes, true, true);
     if (!merged) return null;
@@ -158,7 +102,6 @@ function merge(scene, meshes, name) {
     merged.isPickable = false;
     merged.alwaysSelectAsActiveMesh = true;
     merged.renderingGroupId = 1;
-    merged.metadata = { triangles: merged.getTotalIndices() / 3 };
     return merged;
 }
 
@@ -172,292 +115,387 @@ export class Environment {
         this.meshes = [];
         this.flags = [];
         this.materials = [];
-        this.colliders = [];
-        this.contactPulse = 0;
+        this.materialMeshes = new Map();
+        this.materialCache = new Map();
         this.textureSets = new Map();
+        this.colliders = [];
+        this.softContacts = [];
+        this.hardContactCells = new Map();
+        this.softContactCells = new Map();
+        this.contactPulse = 0;
         this._depthMaterial = null;
+        this._shadowMaterials = [];
+        this.assetField = null;
         this.triangles = 0;
-
-        this._build();
+        this.instanceCount = 0;
     }
 
-    _build() {
+    async build() {
+        const distribution = buildBiomeDistribution(this.terrain);
+        this.colliders.push(...distribution.hard);
+        this.softContacts.push(...distribution.soft);
+
+        this.assetField = new AlpineAssetField(this.scene, distribution, this);
+        await this.assetField.build();
+        this.instanceCount = this.assetField.instanceCount;
+
+        this._buildLandmarks();
+        this._buildContactIndex();
+        this.assetField.update({ x: -2, z: 0 });
+        console.info("[himlands] alpine world", {
+            instances: this.instanceCount,
+            hardContacts: this.colliders.length,
+            walkableContacts: this.softContacts.length,
+            assets: distribution.stats,
+        });
+    }
+
+    _buildLandmarks() {
         const scene = this.scene;
-        const rocks = [];
-        const trees = [];
-        const foliage = [];
         const wood = [];
-        const cloth = [];
+        const rocks = [];
         const snow = [];
-        const grass = [];
-        const bushes = [];
-        const tundra = [];
+        const cloth = [];
+        const foliage = [];
 
-        // Foreground anchors: enough asymmetry to make the opening camera feel
-        // authored, while leaving a clean corridor for the character.
-        const outcrops = [
-            [-12, 0, 14, 3.8, 2.2, 2.7], [14, 0, 19, 4.5, 2.5, 3.0],
-            [-22, 0, 38, 5.2, 3.4, 3.4], [24, 0, 48, 6.2, 4.3, 3.8],
-            [-42, 0, 74, 8.0, 5.2, 4.8], [48, 0, 92, 8.5, 5.0, 5.4],
-            [-68, 0, 122, 11, 7.0, 7.0], [70, 0, 138, 13, 8.0, 8.0],
+        // Dense, high-geometry hero conifers occupy terrain points verified in
+        // the production camera. The scanned fir instances continue through
+        // the wider world; these layered crowns provide the strong near/mid
+        // silhouettes that individual sapling cards lose against bright snow.
+        const heroPines = [
+            [8.5, -11.5, 8.2], [20.5, -22.5, 9.4], [5.2, -34.8, 7.6],
+            [24.5, -45.2, 10.2], [39.5, -57.5, 9.0], [2.8, -57.0, 8.6],
+            [12.0, -72.0, 10.8], [48.0, -69.0, 11.4], [-7.5, -42.0, 7.8],
         ];
-        outcrops.forEach((p, i) => {
-            const y = this.terrain.heightAt(p[0], p[2]);
-            rocks.push(rock(scene, p[0], y + p[4] * 0.22, p[2], p[3], p[4], p[5], i + 1));
-            this._collider(p[0], p[2], Math.max(p[3], p[5]) * 0.68, "outcrop");
-            if (i < 6) {
-                rocks.push(rock(scene, p[0] + 2.2, y + 0.4, p[2] + 1.4, p[3] * 0.45, p[4] * 0.38, p[5] * 0.50, i + 9));
-                this._collider(p[0] + 2.2, p[2] + 1.4, Math.max(p[3], p[5]) * 0.28, "outcrop");
+        heroPines.forEach(([x, z, height], treeIndex) => {
+            const y = this.terrain.heightAt(x, z);
+            wood.push(timber(scene, "heroPineTrunk", x, y + height * 0.46, z, height * 0.92, 0.20 + height * 0.014));
+            const layers = 18;
+            for (let layer = 0; layer < layers; layer++) {
+                const t = layer / (layers - 1);
+                const irregular = 1 + Math.sin(treeIndex * 4.17 + layer * 2.31) * 0.12;
+                const layerY = y + 1.15 + t * height * 0.88 + Math.sin(layer * 3.7 + treeIndex) * 0.11;
+                const radius = (1 - t * 0.86) * (1.70 + height * 0.082) * irregular;
+                const lobes = t > 0.78 ? 3 : 4;
+                for (let lobe = 0; lobe < lobes; lobe++) {
+                    const angle = treeIndex * 1.71 + layer * 2.17 + lobe * (Math.PI * 2 / lobes)
+                        + Math.sin(layer * 7.1 + lobe * 2.9) * 0.19;
+                    const crown = MeshBuilder.CreateIcoSphere("heroPineBranchMass", {
+                        radius: 1,
+                        subdivisions: 3,
+                    }, scene);
+                    foliage.push(baked(
+                        crown,
+                        x + Math.cos(angle) * radius * 0.38,
+                        layerY + Math.sin(angle * 2.3) * 0.16,
+                        z + Math.sin(angle) * radius * 0.38,
+                        new Vector3(radius * (0.58 + 0.08 * Math.sin(angle)), 0.22 + radius * 0.10, radius * 0.22),
+                        new Vector3(0.12 * Math.sin(angle), angle, 0.18 * Math.cos(angle))
+                    ));
+                }
+                const core = MeshBuilder.CreateIcoSphere("heroPineCrownCore", {
+                    radius: 1,
+                    subdivisions: 3,
+                }, scene);
+                foliage.push(baked(
+                    core,
+                    x + Math.sin(layer * 2.8) * radius * 0.08,
+                    layerY,
+                    z + Math.cos(layer * 3.1) * radius * 0.08,
+                    new Vector3(radius * 0.42, 0.36 + radius * 0.10, radius * 0.42),
+                    new Vector3(layer * 0.07, layer * 1.31, treeIndex * 0.05)
+                ));
             }
+            this._collider(x, z, 0.34, 0.34, 0, "mature fir trunk");
         });
 
-        // A staggered high-altitude juniper line frames the valley and gives
-        // the sun something close enough to rim-light.
-        const treeSpots = [
-            [-34, 29], [-27, 42], [-39, 53], [-30, 67], [-54, 86],
-            [32, 32], [39, 46], [31, 61], [52, 72], [59, 101],
-            [-84, 132], [-69, 150], [78, 148], [96, 170],
+        // Weathered log shelters. Each is built from round, tapered timbers and
+        // individually overlapped roof boards rather than box silhouettes.
+        const shelters = [
+            [31.6, -62.6, 0.74],
+            [-52, 92, 0.18], [148, 236, -0.52], [-258, 172, 0.74], [326, 286, -1.08],
+            [-392, 44, 0.35], [438, -258, 1.22], [-112, -402, -0.68], [204, -486, 0.92],
         ];
-        treeSpots.forEach((p, i) => {
-            const x = p[0] + Math.sin(i * 4.1) * 2.5;
-            const z = p[1] + Math.cos(i * 2.4) * 2.5;
-            const h = 5.0 + (i % 4) * 0.9;
+        shelters.forEach(([x, z, yaw], index) => {
             const y = this.terrain.heightAt(x, z);
-            const tree = pine(scene, x, y, z, h, i + 0.4);
-            trees.push(...tree.trunkParts);
-            foliage.push(...tree.foliageParts);
-            this._collider(x, z, 0.72, "juniper");
+            const cos = Math.cos(yaw), sin = Math.sin(yaw);
+            const local = (lx, lz) => [x + lx * cos + lz * sin, z - lx * sin + lz * cos];
+            for (const [lx, lz] of [[-1.55, -1.1], [1.55, -1.1], [-1.55, 1.1], [1.55, 1.1]]) {
+                const [px, pz] = local(lx, lz);
+                wood.push(timber(scene, "shelterPost", px, y + 1.55, pz, 3.1, 0.15, yaw));
+            }
+            // Closely fitted round-log rear and side walls give the shelter a
+            // believable occupied mass while keeping its downhill face open.
+            for (let row = 0; row < 8; row++) {
+                const wallY = y + 0.28 + row * 0.32;
+                const [backX, backZ] = local(0, 1.08);
+                wood.push(timber(scene, "shelterBackLog", backX, wallY, backZ, 3.18, 0.16, yaw, true));
+                if (row < 6) {
+                    for (const side of [-1, 1]) {
+                        const [sideX, sideZ] = local(side * 1.48, 0);
+                        wood.push(timber(scene, "shelterSideLog", sideX, wallY, sideZ, 2.08, 0.15, yaw + Math.PI * 0.5, true));
+                    }
+                }
+            }
+            wood.push(timber(scene, "shelterRidge", x, y + 3.2, z, 3.4, 0.15, yaw, true));
+            for (let board = -7; board <= 7; board++) {
+                const offset = board * 0.24;
+                const [px, pz] = local(offset, 0);
+                wood.push(box(scene, "roofBoard", px - sin * 0.7, y + 3.0, pz - cos * 0.7, 0.22, 0.11, 2.05, yaw - 0.34));
+                wood.push(box(scene, "roofBoard", px + sin * 0.7, y + 3.0, pz + cos * 0.7, 0.22, 0.11, 2.05, yaw + 0.34));
+            }
+            const pillow = MeshBuilder.CreateIcoSphere("roofSnow", { radius: 1, subdivisions: 3 }, scene);
+            snow.push(baked(pillow, x, y + 3.15, z, new Vector3(1.9, 0.22, 1.5), new Vector3(0, yaw, 0)));
+            this._collider(x, z, 1.9, 1.55, yaw, "log shelter");
+
+            // A small cairn and prayer marker turn each shelter into a site,
+            // rather than a lone repeated hut asset.
+            const cairnX = x + cos * 3.2;
+            const cairnZ = z - sin * 3.2;
+            for (let layer = 0; layer < 5; layer++) {
+                rocks.push(stone(scene, cairnX, y + 0.18 + layer * 0.27, cairnZ,
+                    0.58 - layer * 0.075, 0.16, 0.46 - layer * 0.055, index * 9 + layer));
+            }
+            this._collider(cairnX, cairnZ, 0.46, 0.42, 0, "cairn");
         });
 
-        // Full-radius ecology pass. The golden-angle distribution avoids rows
-        // and keeps the world deterministic across every run and every machine.
-        for (let i = 0; i < 176; i++) {
-            const a = i * 2.399963 + Math.sin(i * 0.71) * 0.12;
-            const r = 34 + (i % 19) * 30 + Math.sin(i * 1.37) * 8;
-            const x = Math.cos(a) * Math.min(PLAY_RADIUS - 24, r);
-            const z = Math.sin(a) * Math.min(PLAY_RADIUS - 24, r);
+        // Low dry-stone walls follow several trail shoulders. Irregular rows,
+        // gaps and cap stones keep the silhouette from reading as a repeated box.
+        const walls = [
+            [16.7, -37.1, 0.86],
+            [-18, 46, 0.12], [76, 118, -0.34], [-164, 286, 0.78], [262, 362, -0.62],
+            [-352, -142, 0.25], [414, 86, 1.08], [-246, -384, -0.82], [84, -526, 0.46],
+        ];
+        walls.forEach(([x, z, yaw], wallIndex) => {
             const y = this.terrain.heightAt(x, z);
-            grass.push(...grassCluster(scene, x, y + 0.01, z, 0.62 + (i % 5) * 0.14, i + 0.3));
-            if (i % 2 === 0) bushes.push(...shrubCluster(scene, x + 1.2, y, z - 0.7, 0.55 + (i % 4) * 0.11, i + 8, "blueJuniper"));
-            if (i % 5 === 0) tundra.push(...shrubCluster(scene, x - 1.4, y, z + 1.1, 0.72 + (i % 3) * 0.12, i + 19));
-            if (i % 3 === 0) {
-                const rx = x - 1.9;
-                const rz = z + 1.4;
-                const rockScale = 0.42 + (i % 4) * 0.12;
-                rocks.push(rock(scene, rx, y + rockScale * 0.34, rz, rockScale * 1.25, rockScale * 0.72, rockScale, i + 320));
-                // Small boulders now have their own player-scale colliders as
-                // well; no more visual-only pebbles the character can ghost through.
-                this._collider(rx, rz, rockScale * 0.82, "small boulder");
+            const cos = Math.cos(yaw), sin = Math.sin(yaw);
+            for (let row = 0; row < 3; row++) {
+                const count = 10 - row;
+                for (let i = 0; i < count; i++) {
+                    const along = (i - (count - 1) * 0.5) * 0.64 + (row % 2) * 0.21;
+                    const px = x + along * cos;
+                    const pz = z - along * sin;
+                    rocks.push(stone(scene, px, y + 0.18 + row * 0.34, pz,
+                        0.36 + ((i + row) % 3) * 0.055, 0.19, 0.29, wallIndex * 41 + row * 11 + i));
+                }
             }
-            if (i % 7 === 0) {
-                const tree = pine(scene, x + 2.2, y, z - 1.5, 3.8 + (i % 4) * 0.45, i + 70);
-                trees.push(...tree.trunkParts);
-                foliage.push(...tree.foliageParts);
-                this._collider(x + 2.2, z - 1.5, 0.62, "juniper");
-            }
-        }
-
-        // A looser outer ring reads as a living valley wall instead of a hard
-        // prop boundary. These are smaller and lower contrast by design.
-        for (let i = 0; i < 48; i++) {
-            const a = i * 2.399963 + 0.4;
-            const r = 360 + (i % 9) * 26;
-            const x = Math.cos(a) * Math.min(PLAY_RADIUS - 10, r);
-            const z = Math.sin(a) * Math.min(PLAY_RADIUS - 10, r);
-            const y = this.terrain.heightAt(x, z);
-            grass.push(...grassCluster(scene, x, y, z, 0.42 + (i % 4) * 0.08, i + 101));
-            bushes.push(...shrubCluster(scene, x, y, z, 0.45 + (i % 3) * 0.08, i + 131, "blueJuniper"));
-        }
-
-        // Hilltop shrine, built from real boxes and a layered stone base. It is
-        // a visual destination rather than a UI marker.
-        const sx = 36, sz = 116, sy = this.terrain.heightAt(sx, sz);
-        rocks.push(rock(scene, sx - 1.8, sy + 0.45, sz, 2.2, 0.9, 1.8, 31));
-        rocks.push(rock(scene, sx + 1.5, sy + 0.52, sz + 0.5, 1.6, 0.82, 1.45, 32));
-        wood.push(box(scene, "shrinePostL", sx - 1.35, sy + 2.1, sz, 0.26, 3.2, 0.26));
-        wood.push(box(scene, "shrinePostR", sx + 1.35, sy + 2.1, sz, 0.26, 3.2, 0.26));
-        wood.push(box(scene, "shrineBeam", sx, sy + 3.35, sz, 3.2, 0.25, 0.25));
-        wood.push(box(scene, "shrineBack", sx, sy + 2.0, sz + 0.55, 2.75, 2.7, 0.18));
-        const roofL = box(scene, "shrineRoofL", sx - 0.65, sy + 3.65, sz, 1.75, 0.18, 3.3, -0.14);
-        const roofR = box(scene, "shrineRoofR", sx + 0.65, sy + 3.65, sz, 1.75, 0.18, 3.3, 0.14);
-        wood.push(roofL, roofR);
-        this._collider(sx, sz, 2.5, "shrine");
-
-        // Cairns punctuate the route with a human-scale rhythm.
-        for (let i = 0; i < 7; i++) {
-            const x = -8 + i * 8.5;
-            const z = 28 + (i % 2) * 10;
-            const y = this.terrain.heightAt(x, z);
-            for (let k = 0; k < 3 + (i % 2); k++) {
-                rocks.push(rock(scene, x + Math.sin(k * 2.2 + i) * 0.16, y + 0.35 + k * 0.42, z, 0.82 - k * 0.13, 0.26, 0.66 - k * 0.10, 50 + i * 4 + k));
-            }
-            this._collider(x, z, 0.72, "cairn");
-        }
-
-        // Small buried snow pillows soften the prop bases and make them feel
-        // seated in the field rather than dropped onto it.
-        for (let i = 0; i < 16; i++) {
-            const x = Math.sin(i * 9.1) * 46;
-            const z = 18 + (i * 17) % 128;
-            const y = this.terrain.heightAt(x, z);
-            const m = MeshBuilder.CreateIcoSphere("snowPillow", { radius: 1, subdivisions: 2 }, scene);
-            snow.push(baked(m, x, y + 0.16, z, new Vector3(1.6 + (i % 3) * 0.35, 0.32, 1.05 + (i % 4) * 0.2), new Vector3(0, i, 0)));
-        }
-
-        this._buildArtifacts(scene, wood, rocks, cloth);
-
-        // Prayer cloth is deliberately sparse: warm colour in a cool world,
-        // but never a neon billboard. These remain separate so wind can move
-        // them without reallocating geometry.
-        const flagSpots = [[sx - 2.0, sy + 2.9, sz + 0.2], [sx + 2.0, sy + 2.6, sz + 0.2], [-47, this.terrain.heightAt(-47, 72) + 2.5, 72]];
-        flagSpots.forEach((p, i) => {
-            const pole = MeshBuilder.CreateCylinder("prayerPole", { diameter: 0.06, height: 3.3, tessellation: 8 }, scene);
-            const poleMesh = baked(pole, p[0], p[1] - 1.2, p[2]);
-            poleMesh.material = this._material("wood");
-            this.flags.push({ pole: poleMesh, phase: i * 1.8 });
-            const flag = MeshBuilder.CreatePlane("prayerCloth", { width: 1.35, height: 0.64, sideOrientation: 2 }, scene);
-            flag.rotation.y = Math.PI * 0.5;
-            const flagMesh = baked(flag, p[0] + 0.62, p[1], p[2]);
-            flagMesh.material = this._material("cloth");
-            this.flags.push({ cloth: flagMesh, phase: i * 1.8 });
+            this._collider(x, z, 3.35, 0.48, yaw, "stone wall");
         });
 
-        this._addMerged(merge(scene, rocks, "environmentRocks"), "rock");
-        this._addMerged(merge(scene, trees, "environmentPineTrunks"), "tree");
-        this._addMerged(merge(scene, foliage, "environmentPineFoliage"), "foliage");
-        this._addMerged(merge(scene, wood, "environmentShrine"), "wood");
-        this._addMerged(merge(scene, snow, "environmentSnowPillows"), "snow");
-        this._addMerged(merge(scene, grass, "environmentGrass"), "grass");
-        this._addMerged(merge(scene, bushes, "environmentBushes"), "bush");
-        this._addMerged(merge(scene, tundra, "environmentTundra"), "tundra");
-        this._addMerged(merge(scene, cloth, "environmentDistantCloth"), "cloth");
-
-        for (const f of this.flags) {
-            for (const key of ["pole", "cloth"]) {
-                if (f[key] && !this.meshes.includes(f[key])) this._register(f[key], key === "cloth" ? "cloth" : "wood");
+        // Half-buried sleds, made from round runners, braces and lashed beds.
+        const sleds = [[4.8, -16.6, 0.78], [22, 82, -0.18], [-124, 188, 0.52], [186, 328, -0.76], [-318, 248, 0.24], [368, -174, 1.12], [-82, -336, -0.44]];
+        sleds.forEach(([x, z, yaw], index) => {
+            const y = this.terrain.heightAt(x, z);
+            const cos = Math.cos(yaw), sin = Math.sin(yaw);
+            for (const side of [-0.55, 0.55]) {
+                const px = x + side * -sin;
+                const pz = z + side * cos;
+                wood.push(timber(scene, "sledRunner", px, y + 0.18, pz, 3.4, 0.075, yaw, true));
             }
+            for (let brace = -2; brace <= 2; brace++) {
+                const along = brace * 0.56;
+                wood.push(timber(scene, "sledBrace", x + along * cos, y + 0.46, z - along * sin, 1.38, 0.065, yaw + Math.PI * 0.5, true));
+            }
+            snow.push(baked(
+                MeshBuilder.CreateIcoSphere("sledSnow", { radius: 1, subdivisions: 3 }, scene),
+                x, y + 0.48, z,
+                new Vector3(1.25, 0.16, 0.48),
+                new Vector3(0, yaw, 0)
+            ));
+            this._collider(x, z, 1.62, 0.72, yaw, "supply sled");
+            if (index % 2 === 0) this._buildPrayerMarker(x + 2.5, z + 1.2, y, yaw, wood, cloth);
+        });
+
+        // Opening shrine: it deliberately sits in the first journey arc, framed
+        // by dense scanned vegetation rather than isolated on an empty snowfield.
+        const shrineX = 26.0, shrineZ = -31.8;
+        const shrineY = this.terrain.heightAt(shrineX, shrineZ);
+        for (const side of [-1.25, 1.25]) {
+            wood.push(timber(scene, "shrinePost", shrineX + side, shrineY + 1.85, shrineZ, 3.7, 0.16));
+        }
+        wood.push(timber(scene, "shrineBeam", shrineX, shrineY + 3.35, shrineZ, 3.2, 0.18, 0, true));
+        for (let i = -4; i <= 4; i++) {
+            wood.push(box(scene, "shrineRoofSlat", shrineX + i * 0.42, shrineY + 3.62, shrineZ, 0.34, 0.12, 3.3, i * 0.008));
+        }
+        this._buildPrayerMarker(shrineX - 2.4, shrineZ + 0.4, shrineY, 0, wood, cloth);
+        this._buildPrayerMarker(shrineX + 2.4, shrineZ + 0.4, shrineY, 0, wood, cloth);
+        this._collider(shrineX, shrineZ, 2.1, 1.6, 0, "trail shrine");
+
+        this._addMerged(merge(wood, "landmarkTimber"), "wood");
+        this._addMerged(merge(rocks, "landmarkStonework"), "rock");
+        this._addMerged(merge(snow, "landmarkSnowCaps"), "snow");
+        this._addMerged(merge(cloth, "landmarkPrayerCloth"), "cloth");
+        this._addMerged(merge(foliage, "heroConiferCanopy"), "foliage");
+    }
+
+    _buildPrayerMarker(x, z, groundY, yaw, wood, cloth) {
+        wood.push(timber(this.scene, "prayerPole", x, groundY + 1.8, z, 3.6, 0.05, yaw));
+        const colors = 5;
+        for (let i = 0; i < colors; i++) {
+            const flag = MeshBuilder.CreatePlane("prayerCloth", {
+                width: 0.62,
+                height: 0.28,
+                sideOrientation: Mesh.DOUBLESIDE,
+            }, this.scene);
+            cloth.push(baked(
+                flag,
+                x + Math.cos(yaw) * (0.38 + i * 0.38),
+                groundY + 2.9 - i * 0.18,
+                z - Math.sin(yaw) * (0.38 + i * 0.38),
+                null,
+                new Vector3(0, yaw + Math.PI * 0.5, 0)
+            ));
         }
     }
 
-    _buildArtifacts(scene, wood, rocks, cloth) {
-        const sites = [
-            [-208, 154], [238, 198], [-318, -86], [374, -238],
-            [-458, 18], [492, 286], [-118, -362], [176, -432],
-            [34, 508], [-514, -302],
-        ];
-        sites.forEach(([x, z], i) => {
-            const y = this.terrain.heightAt(x, z);
-            if (i % 4 === 0) {
-                // A small timber shelter with a snow-heavy pitched roof.
-                rocks.push(rock(scene, x - 1.8, y + 0.35, z, 2.1, 0.7, 1.5, 200 + i));
-                rocks.push(rock(scene, x + 1.6, y + 0.42, z + 0.4, 1.7, 0.72, 1.2, 220 + i));
-                wood.push(box(scene, "trailShelterPostA", x - 1.2, y + 1.85, z, 0.22, 2.7, 0.22));
-                wood.push(box(scene, "trailShelterPostB", x + 1.2, y + 1.85, z, 0.22, 2.7, 0.22));
-                wood.push(box(scene, "trailShelterBeam", x, y + 3.0, z, 2.8, 0.22, 0.22));
-                wood.push(box(scene, "trailShelterRoofA", x - 0.55, y + 3.25, z, 1.55, 0.18, 2.8, -0.18));
-                wood.push(box(scene, "trailShelterRoofB", x + 0.55, y + 3.25, z, 1.55, 0.18, 2.8, 0.18));
-                this._collider(x, z, 2.4, "trail shelter");
-            } else if (i % 4 === 1) {
-                // A narrow footbridge / snow crossing: visual artifact and a
-                // solid hand-built obstruction at its ends.
-                for (let k = -3; k <= 3; k++) {
-                    wood.push(box(scene, "bridgePlank", x + k * 0.58, y + 0.42, z, 0.48, 0.16, 3.0, 0.03 * Math.sin(k)));
-                }
-                wood.push(box(scene, "bridgeRailA", x, y + 1.05, z - 1.25, 4.4, 0.12, 0.12));
-                wood.push(box(scene, "bridgeRailB", x, y + 1.05, z + 1.25, 4.4, 0.12, 0.12));
-                this._collider(x - 2.3, z, 0.72, "bridge end");
-                this._collider(x + 2.3, z, 0.72, "bridge end");
-            } else if (i % 4 === 2) {
-                // A half-buried supply sled, a small human trace in a very
-                // large landscape.
-                wood.push(box(scene, "sledBed", x, y + 0.48, z, 2.8, 0.20, 1.1, -0.08));
-                wood.push(box(scene, "sledRail", x - 0.85, y + 0.24, z - 0.55, 3.3, 0.10, 0.10, -0.12));
-                wood.push(box(scene, "sledRail", x - 0.85, y + 0.24, z + 0.55, 3.3, 0.10, 0.10, -0.12));
-                this._collider(x, z, 1.55, "sled");
-            } else {
-                // Low stacked-stone wall and a prayer marker at its shoulder.
-                for (let k = -3; k <= 3; k++) {
-                    rocks.push(rock(scene, x + k * 0.72, y + 0.34 + (Math.abs(k) % 2) * 0.15, z, 0.62, 0.30, 0.40, 260 + i * 8 + k));
-                }
-                const pole = MeshBuilder.CreateCylinder("distantPrayerPole", { diameter: 0.07, height: 3.8, tessellation: 8 }, scene);
-                wood.push(baked(pole, x + 2.5, y + 1.8, z));
-                const marker = MeshBuilder.CreatePlane("distantPrayerCloth", { width: 1.4, height: 0.62, sideOrientation: 2 }, scene);
-                cloth.push(baked(marker, x + 3.15, y + 2.8, z, null, new Vector3(0, Math.PI * 0.5, 0)));
-                this._collider(x, z, 3.4, "stone wall");
-            }
-        });
+    _collider(x, z, rx, rz, yaw, kind) {
+        this.colliders.push({ x, z, rx, rz, yaw, kind });
     }
 
-    _collider(x, z, radius, kind) {
-        this.colliders.push({ x, z, radius, kind });
+    _buildContactIndex() {
+        const index = (contacts, target) => {
+            for (const contact of contacts) {
+                const cx = Math.floor(contact.x / BIOME_CELL_SIZE);
+                const cz = Math.floor(contact.z / BIOME_CELL_SIZE);
+                const key = cx + ":" + cz;
+                const bucket = target.get(key) || [];
+                bucket.push(contact);
+                target.set(key, bucket);
+            }
+        };
+        index(this.colliders, this.hardContactCells);
+        index(this.softContacts, this.softContactCells);
+    }
+
+    _contactsNear(position, index) {
+        const cx = Math.floor(position.x / BIOME_CELL_SIZE);
+        const cz = Math.floor(position.z / BIOME_CELL_SIZE);
+        const nearby = [];
+        for (let z = cz - 1; z <= cz + 1; z++) {
+            for (let x = cx - 1; x <= cx + 1; x++) {
+                const bucket = index.get(x + ":" + z);
+                if (bucket) nearby.push(...bucket);
+            }
+        }
+        return nearby;
     }
 
     /**
-     * Resolve the character's proposed horizontal movement against the authored
-     * world. Props use cheap broad-phase circles, while the actual meshes remain
-     * detailed and merged for rendering. Grass and shrubs intentionally have no
-     * hard collider: the player passes through and the shader bends around them.
+     * Elliptical hard contacts follow each object's footprint much more closely
+     * than the old circular broad phase. Centimetre-scale rocks are separate
+     * walkable surfaces: they lift a footfall and can break a fast surf edge,
+     * while trees, boulders and built artifacts absorb motion completely.
      */
     resolveMotion(current, next, velocity, dt, controller, rig) {
         let hit = false;
-        for (const obstacle of this.colliders) {
-            const min = obstacle.radius + 0.38;
-            let dx = next.x - obstacle.x;
-            let dz = next.z - obstacle.z;
-            let dist = Math.hypot(dx, dz);
-            if (dist >= min) continue;
+        controller.beginSurfaceContacts();
 
-            if (dist < 1e-4) {
-                dx = current.x - obstacle.x;
-                dz = current.z - obstacle.z;
-                dist = Math.hypot(dx, dz) || 1;
-            }
-            dx /= dist;
-            dz /= dist;
-            next.x = obstacle.x + dx * (min + 0.04);
-            next.z = obstacle.z + dz * (min + 0.04);
+        for (const obstacle of this._contactsNear(next, this.hardContactCells)) {
+            const cos = Math.cos(obstacle.yaw || 0);
+            const sin = Math.sin(obstacle.yaw || 0);
+            const dx = next.x - obstacle.x;
+            const dz = next.z - obstacle.z;
+            const lx = dx * cos - dz * sin;
+            const lz = dx * sin + dz * cos;
+            const rx = obstacle.rx + 0.38;
+            const rz = obstacle.rz + 0.38;
+            const q = Math.hypot(lx / rx, lz / rz);
+            if (q >= 1) continue;
+
+            const angle = Math.atan2(lz / rz, lx / rx);
+            const bx = Math.cos(angle) * rx;
+            const bz = Math.sin(angle) * rz;
+            const wx = bx * cos + bz * sin;
+            const wz = -bx * sin + bz * cos;
+            let nx = wx;
+            let nz = wz;
+            const nl = Math.hypot(nx, nz) || 1;
+            nx /= nl;
+            nz /= nl;
+            next.x = obstacle.x + wx + nx * 0.035;
+            next.z = obstacle.z + wz + nz * 0.035;
             velocity.x = 0;
             velocity.z = 0;
             hit = true;
-            controller.registerImpact(dx, dz, rig);
+            controller.registerImpact(nx, nz, rig);
         }
-        this.contactPulse = hit ? 1 : Math.max(0, (this.contactPulse || 0) - dt * 3.5);
+
+        for (const contact of this._contactsNear(next, this.softContactCells)) {
+            const cos = Math.cos(contact.yaw || 0);
+            const sin = Math.sin(contact.yaw || 0);
+            const dx = next.x - contact.x;
+            const dz = next.z - contact.z;
+            const lx = dx * cos - dz * sin;
+            const lz = dx * sin + dz * cos;
+            const q = Math.hypot(lx / (contact.rx + 0.24), lz / (contact.rz + 0.24));
+            if (q < 1) controller.registerSurfaceContact(contact, dx, dz, rig);
+        }
+
+        this.contactPulse = hit ? 1 : Math.max(0, this.contactPulse - dt * 3.5);
     }
 
-    _material(kind) {
+    materialFromAsset(kind, sourceMaterial, slug) {
+        const key = slug + ":" + (sourceMaterial?.uniqueId ?? "none") + ":" + kind;
+        const cached = this.materialCache.get(key);
+        if (cached) return cached;
+
+        const fallback = this._textureSet(PALETTE[kind].texture);
+        const options = {
+            albedo: sourceMaterial?.albedoTexture || fallback.albedo,
+            normal: sourceMaterial?.bumpTexture || fallback.normal,
+            rough: sourceMaterial?.metallicTexture || fallback.rough,
+            alphaCutoff: sourceMaterial?.needAlphaTesting?.()
+                ? (sourceMaterial.alphaCutOff || 0.36)
+                : sourceMaterial?.transparencyMode != null ? 0.18 : 0,
+            backFaceCulling: sourceMaterial?.backFaceCulling ?? true,
+            textureScale: 1,
+        };
+        const material = this._material(kind, options, "asset-" + slug);
+        this.materialCache.set(key, material);
+        return material;
+    }
+
+    registerAssetMesh(mesh, kind) {
+        this.meshes.push(mesh);
+        this.materialMeshes.set(mesh.material, mesh);
+        this._registerCaster(mesh, kind);
+    }
+
+    _material(kind, options = null, namePrefix = "environment") {
         const p = PALETTE[kind];
-        const m = new ShaderMaterial(
-            "environment-" + kind,
+        const material = new ShaderMaterial(
+            namePrefix + "-" + kind + "-" + this.materials.length,
             this.scene,
             { vertex: "environment", fragment: "environment" },
             {
                 attributes: ["position", "normal", "uv"],
                 uniforms: [
-                    "viewProjection", "cameraPos", "playerPos", "playerSpeed",
-                    "sunDir", "sunRadiance", "shR",
-                    "albedo", "snowTint", "snowAmount", "roughness", "noiseScale", "fogDensity",
-                    "time", "windAmount", "interactionAmount", "textureScale",
+                    "world", "viewProjection", "cameraPos", "playerPos", "playerSpeed",
+                    "sunDir", "sunRadiance", "shR", "albedo", "snowTint", "snowAmount",
+                    "roughness", "noiseScale", "fogDensity", "time", "windAmount",
+                    "interactionAmount", "textureScale", "alphaCutoff",
                 ],
                 samplers: ["albedoTex", "normalTex", "roughTex"],
                 shaderLanguage: ShaderLanguage.WGSL,
             }
         );
-        m.backFaceCulling = kind !== "cloth";
-        m.setColor3("albedo", p.albedo);
-        m.setColor3("snowTint", new Color3(0.76, 0.84, 0.93));
-        m.setFloat("snowAmount", p.snow);
-        m.setFloat("roughness", kind === "cloth" ? 0.68 : 0.86);
-        m.setFloat("noiseScale", p.noise);
-        m.setFloat("textureScale", p.scale);
-        m.setFloat("windAmount", kind === "grass" ? 0.06 : kind === "cloth" ? 0.028 : kind === "bush" ? 0.008 : 0.0);
-        m.setFloat("interactionAmount", kind === "grass" ? 1.0 : kind === "bush" ? 0.35 : 0.0);
-        m.metadata = { environmentKind: kind };
-        const textures = this._textureSet(p.texture);
-        m.setTexture("albedoTex", textures.albedo);
-        m.setTexture("normalTex", textures.normal);
-        m.setTexture("roughTex", textures.rough);
-        this.materials.push(m);
-        return m;
+        const textures = options || this._textureSet(p.texture);
+        material.backFaceCulling = options?.backFaceCulling ?? kind !== "cloth";
+        material.setColor3("albedo", p.albedo);
+        material.setColor3("snowTint", new Color3(0.78, 0.86, 0.95));
+        material.setFloat("snowAmount", p.snow);
+        material.setFloat("roughness", kind === "cloth" ? 0.68 : 0.88);
+        material.setFloat("noiseScale", p.noise);
+        material.setFloat("textureScale", options?.textureScale ?? p.scale);
+        material.setFloat("alphaCutoff", options?.alphaCutoff || 0);
+        material.setFloat("windAmount", kind === "grass" ? 0.075 : kind === "cloth" ? 0.034 : kind === "bush" || kind === "tundra" ? 0.016 : kind === "foliage" ? 0.006 : 0);
+        material.setFloat("interactionAmount", kind === "grass" ? 1 : kind === "bush" || kind === "tundra" ? 0.48 : 0);
+        material.setTexture("albedoTex", textures.albedo);
+        material.setTexture("normalTex", textures.normal);
+        material.setTexture("roughTex", textures.rough);
+        material.metadata = { environmentKind: kind };
+        this.materials.push(material);
+        return material;
     }
 
     _textureSet(kind) {
@@ -465,18 +503,12 @@ export class Environment {
         if (cached) return cached;
         const [albedoUrl, normalUrl, roughUrl] = TEXTURE_URLS[kind];
         const make = (url, name) => {
-            const tex = new Texture(
-                url,
-                this.scene,
-                false,
-                false,
-                Constants.TEXTURE_TRILINEAR_SAMPLINGMODE
-            );
-            tex.name = "world-" + kind + "-" + name;
-            tex.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
-            tex.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
-            tex.anisotropicFilteringLevel = 8;
-            return tex;
+            const texture = new Texture(url, this.scene, false, false, Constants.TEXTURE_TRILINEAR_SAMPLINGMODE);
+            texture.name = "world-" + kind + "-" + name;
+            texture.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
+            texture.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+            texture.anisotropicFilteringLevel = 8;
+            return texture;
         };
         const set = {
             albedo: make(albedoUrl, "albedo"),
@@ -489,67 +521,93 @@ export class Environment {
 
     _addMerged(mesh, kind) {
         if (!mesh) return;
-        this._register(mesh, kind);
+        mesh.material = this._material(kind);
+        this.meshes.push(mesh);
+        this.materialMeshes.set(mesh.material, mesh);
+        this.triangles += mesh.getTotalIndices() / 3;
+        this._registerCaster(mesh, kind);
     }
 
-    _register(mesh, kind) {
-        const mat = this._material(kind);
-        mesh.material = mat;
-        this.meshes.push(mesh);
-        this.triangles += mesh.metadata?.triangles || mesh.getTotalIndices() / 3;
+    _registerCaster(mesh, kind) {
+        // Alpha-card vegetation is rendered with cutout transparency in the
+        // beauty pass. Keeping it out of the opaque-only prepasses prevents
+        // rectangular grass/shrub silhouettes while solid scenery continues
+        // to receive proper depth and cascaded shadows.
+        const maskedVegetation = kind === "grass" || kind === "bush" || kind === "tundra" || kind === "foliage" || kind === "cloth";
+        if (maskedVegetation) return;
 
         if (!this._depthMaterial) {
             this._depthMaterial = new ShaderMaterial(
                 "environmentDepth",
                 this.scene,
                 { vertex: "environmentDepth", fragment: "prepass" },
-                { attributes: ["position"], uniforms: ["viewProjection"], shaderLanguage: ShaderLanguage.WGSL }
+                {
+                    attributes: ["position"],
+                    uniforms: ["world", "viewProjection"],
+                    shaderLanguage: ShaderLanguage.WGSL,
+                }
             );
             this._depthMaterial.backFaceCulling = false;
         }
         this.depthPass.registerCaster(mesh, this._depthMaterial);
 
-        // A compact shadow budget: the merged category meshes cast into all
-        // three cascades; loose prayer cloth is intentionally depth-only.
-        if (!kind.includes("cloth")) {
-            this.shadows.registerCaster(mesh, (cascade) => {
+        this.shadows.registerCaster(mesh, (cascade) => {
+            if (!this._shadowMaterials[cascade]) {
                 const shadow = new ShaderMaterial(
                     "environmentShadow" + cascade,
                     this.scene,
                     { vertex: "environmentShadow", fragment: "terrainDepth" },
-                    { attributes: ["position"], uniforms: ["lightViewProjection"], shaderLanguage: ShaderLanguage.WGSL }
+                    {
+                        attributes: ["position"],
+                        uniforms: ["world", "lightViewProjection"],
+                        shaderLanguage: ShaderLanguage.WGSL,
+                    }
                 );
                 shadow.backFaceCulling = false;
-                return shadow;
-            });
-        }
+                this._shadowMaterials[cascade] = shadow;
+            }
+            return this._shadowMaterials[cascade];
+        });
     }
 
     async warmUp() {
-        for (const m of this.materials) {
-            const mesh = this.meshes.find((item) => item.material === m);
-            if (mesh) await whenReady(m, "environment:" + m.name, [mesh, false]);
+        for (const material of this.materials) {
+            const mesh = this.materialMeshes.get(material);
+            if (mesh) {
+                const instanced = !!(mesh.hasThinInstances || mesh.instances?.length);
+                await whenReady(material, "environment:" + material.name, [mesh, instanced]);
+            }
         }
-        await whenReady(this._depthMaterial, "environment depth");
+        const instancedMesh = this.meshes.find((mesh) => mesh.hasThinInstances || mesh.instances?.length);
+        const depthMesh = instancedMesh || this.meshes[0];
+        if (depthMesh) {
+            const instanced = !!(depthMesh.hasThinInstances || depthMesh.instances?.length);
+            await whenReady(this._depthMaterial, "environment depth", [depthMesh, instanced]);
+            for (let cascade = 0; cascade < this._shadowMaterials.length; cascade++) {
+                const shadow = this._shadowMaterials[cascade];
+                if (shadow) await whenReady(shadow, "environment shadow " + cascade, [depthMesh, instanced]);
+            }
+        }
     }
 
     update(time, character) {
-        // Shared uniforms are published once per frame per material.
-        for (const m of this.materials) {
-            m.setVector3("cameraPos", this.scene.activeCamera.position);
-            m.setVector3("playerPos", character.position);
-            m.setFloat("playerSpeed", character.speed);
-            m.setVector3("sunDir", this.sky.sunDir);
-            m.setColor3("sunRadiance", this.sky.sunRadiance);
-            m.setArray4("shR", this.sky.sh);
-            m.setFloat("fogDensity", S.fogDensity);
-            m.setFloat("time", time);
+        this.assetField?.update(character.position);
+        for (const material of this.materials) {
+            material.setVector3("cameraPos", this.scene.activeCamera.position);
+            material.setVector3("playerPos", character.position);
+            material.setFloat("playerSpeed", character.speed);
+            material.setVector3("sunDir", this.sky.sunDir);
+            material.setColor3("sunRadiance", this.sky.sunRadiance);
+            material.setArray4("shR", this.sky.sh);
+            material.setFloat("fogDensity", S.fogDensity);
+            material.setFloat("time", time);
         }
     }
 
     dispose() {
-        for (const mesh of this.meshes) mesh.dispose();
-        for (const material of this.materials) material.dispose();
+        this.assetField?.dispose();
+        for (const mesh of this.meshes) mesh.dispose(false, false);
+        for (const material of this.materials) material.dispose(false, false);
         for (const textures of this.textureSets.values()) {
             textures.albedo.dispose();
             textures.normal.dispose();

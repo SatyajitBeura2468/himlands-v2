@@ -117,9 +117,14 @@ export class DepthPass {
     /** Compile every registered prepass pipeline, behind the loading screen. */
     async warmUp() {
         const list = this.rtt.renderList || [];
+        const compiled = new Set();
         for (let i = 0; i < this.materials.length; i++) {
+            if (compiled.has(this.materials[i])) continue;
+            compiled.add(this.materials[i]);
             await whenReady(
-                this.materials[i], "prepass:" + this.materials[i].name, [list[i], false]
+                this.materials[i],
+                "prepass:" + this.materials[i].name,
+                [list[i], !!(list[i]?.hasThinInstances || list[i]?.instances?.length)]
             );
         }
     }

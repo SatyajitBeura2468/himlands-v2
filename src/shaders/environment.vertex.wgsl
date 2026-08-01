@@ -1,6 +1,8 @@
-// World props are baked into world space at build time. Keeping this vertex
-// path tiny means pines, rocks, shrine beams and cairns can share one material
-// family without touching the terrain clipmap.
+// Environment geometry can be either baked world-space landmarks or streamed
+// thin instances. Babylon supplies `finalWorld` for both paths through the
+// shared instances include.
+
+#include<instancesDeclaration>
 
 attribute position: vec3f;
 attribute normal: vec3f;
@@ -21,7 +23,9 @@ varying vUV: vec2f;
 
 @vertex
 fn main(input: VertexInputs) -> FragmentInputs {
-    var world = vertexInputs.position;
+    #include<instancesVertex>
+    var world = (finalWorld * vec4f(vertexInputs.position, 1.0)).xyz;
+    let worldNormal = normalize((finalWorld * vec4f(vertexInputs.normal, 0.0)).xyz);
     let bladePhase = 0.5 + 0.5 * sin(world.y * 0.18);
     let wind = sin(world.x * 0.31 + world.z * 0.17 + uniforms.time) * uniforms.windAmount * bladePhase;
     world.x += wind;
@@ -33,7 +37,7 @@ fn main(input: VertexInputs) -> FragmentInputs {
     world.x += sin(world.y * 1.7 + uniforms.time) * contact * 0.22;
     world.z += cos(world.y * 1.4 + uniforms.time) * contact * 0.14;
     vertexOutputs.vWorld = world;
-    vertexOutputs.vNormal = normalize(vertexInputs.normal);
+    vertexOutputs.vNormal = worldNormal;
     vertexOutputs.vUV = vertexInputs.uv;
     vertexOutputs.vViewDist = distance(world, uniforms.cameraPos);
     vertexOutputs.position = uniforms.viewProjection * vec4f(world, 1.0);

@@ -256,10 +256,14 @@ export class Figure {
             0.10 * run
             + 0.012 * clamp(fwdAcc, -9, 22)
             + surf * (0.30 + 0.16 * ch.speed01)
-            - ch.hurt * 0.42;
+            - ch.hurt * 0.42
+            + ch.slip * 0.12;
         this.pitch = damp(this.pitch, pitchWant, 7, h);
 
-        const rollWant = ch.lean * (0.16 + 0.34 * surf) + ch.hurt * ch.impactSide * 0.30;
+        const rollWant =
+            ch.lean * (0.16 + 0.34 * surf)
+            + ch.hurt * ch.impactSide * 0.30
+            + ch.slip * ch.slipSide * 0.42;
         this.roll = damp(this.roll, rollWant, 8, h);
 
         // Vertical bob: the pelvis drops through each stance and rises over the
@@ -267,7 +271,8 @@ export class Figure {
         // stance is a static crouch.
         const bobWant =
             (1 - surf) * (-0.028 * run * (0.5 - 0.5 * Math.cos(4 * Math.PI * ch.gaitPhase)))
-            - ch.hurt * 0.045 * Math.sin(this._t * 24);
+            - ch.hurt * 0.045 * Math.sin(this._t * 24)
+            + ch.surfaceLift * 0.38;
         this.bob = damp(this.bob, bobWant, 18, h);
 
         // Crouch: a little at running speed, a lot on the board.

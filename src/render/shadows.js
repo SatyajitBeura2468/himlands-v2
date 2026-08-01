@@ -156,9 +156,10 @@ export class ShadowSystem {
             const mat = makeMaterial(i);
             this.maps[i].renderList.push(mesh);
             this.maps[i].setMaterialForRendering(mesh, mat);
-            this.materials.push(mat);
+            if (!this.materials.includes(mat)) this.materials.push(mat);
             if (!this._perCascade) this._perCascade = [];
-            (this._perCascade[i] ||= []).push(mat);
+            const cascadeMaterials = (this._perCascade[i] ||= []);
+            if (!cascadeMaterials.includes(mat)) cascadeMaterials.push(mat);
         }
     }
 

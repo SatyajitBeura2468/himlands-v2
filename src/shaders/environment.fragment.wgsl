@@ -17,6 +17,7 @@ uniform roughness: f32;
 uniform noiseScale: f32;
 uniform fogDensity: f32;
 uniform textureScale: f32;
+uniform alphaCutoff: f32;
 
 var albedoTex: texture_2d<f32>;
 var albedoTexSampler: sampler;
@@ -28,9 +29,15 @@ var roughTexSampler: sampler;
 @fragment
 fn main(input: FragmentInputs) -> FragmentOutputs {
     let uv = fract(input.vUV * uniforms.textureScale);
-    let albedoMap = textureSample(albedoTex, albedoTexSampler, uv).rgb;
+    let albedoSample = textureSample(albedoTex, albedoTexSampler, uv);
+    if (albedoSample.a < uniforms.alphaCutoff) {
+        discard;
+    }
+    let albedoMap = albedoSample.rgb;
     let normalMap = textureSample(normalTex, normalTexSampler, uv).rgb * 2.0 - vec3f(1.0);
-    let roughMap = textureSample(roughTex, roughTexSampler, uv).r;
+    // Imported glTF models use ARM packing (roughness in green); the standalone
+    // grayscale roughness maps carry the same value in every channel.
+    let roughMap = textureSample(roughTex, roughTexSampler, uv).g;
     // The maps are tangent-space textures but these procedural meshes do not
     // carry tangents. Keep their high-frequency relief visible without
     // allowing a tangent-space vector to overturn the geometric normal.

@@ -10,6 +10,8 @@
  */
 
 import { ShaderStore } from "@babylonjs/core/Engines/shaderStore";
+import "@babylonjs/core/ShadersWGSL/ShadersInclude/instancesDeclaration";
+import "@babylonjs/core/ShadersWGSL/ShadersInclude/instancesVertex";
 
 import noiseLib from "./lib/noise.wgsl?raw";
 import terrainLib from "./lib/terrain.wgsl?raw";

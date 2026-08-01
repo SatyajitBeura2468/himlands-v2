@@ -114,6 +114,15 @@ export class CharacterController {
         this.hurt = 0;
         this.impactSide = 0;
         this._impactCooldown = 0;
+
+        // Walkable world detail. Small stones and exposed roots lift the body
+        // over their actual profile; at surf speed the same contacts can break
+        // the edge and produce a short, recoverable lateral slip.
+        this.surfaceLift = 0;
+        this.surfaceLiftTarget = 0;
+        this.slip = 0;
+        this.slipSide = 0;
+        this._slipCooldown = 0;
     }
 
     /**
@@ -124,7 +133,9 @@ export class CharacterController {
         const h = Math.min(dt, 1 / 30);
 
         this.hurt = Math.max(0, this.hurt - h * 3.8);
+        this.slip = Math.max(0, this.slip - h * 2.9);
         this._impactCooldown = Math.max(0, this._impactCooldown - h);
+        this._slipCooldown = Math.max(0, this._slipCooldown - h);
 
         this.prevVelocity.copyFrom(this.velocity);
         this.surfActive = input.surf;
@@ -150,8 +161,14 @@ export class CharacterController {
 
         this.groundY = this.terrain.heightAt(this.position.x, this.position.z);
         this.terrain.normalAt(this.position.x, this.position.z, this.groundNormal);
+        this.surfaceLift = expDamp(
+            this.surfaceLift,
+            this.surfaceLiftTarget,
+            this.surfaceLiftTarget > this.surfaceLift ? 24 : 10,
+            h
+        );
         // Snap with a little softness so micro-ripples don't jitter the rig.
-        this.position.y = expDamp(this.position.y, this.groundY, 26, h);
+        this.position.y = expDamp(this.position.y, this.groundY + this.surfaceLift, 26, h);
 
         // --------------------------------------------------------- bookkeeping
         this.speed = Math.hypot(this.velocity.x, this.velocity.z);
@@ -182,6 +199,28 @@ export class CharacterController {
         this.impactSide = Math.max(-1, Math.min(1, nx * rx + nz * rz));
         this._impactCooldown = 0.24;
         rig?.addTrauma(0.22);
+    }
+
+    beginSurfaceContacts() {
+        this.surfaceLiftTarget = 0;
+    }
+
+    registerSurfaceContact(contact, dx, dz, rig) {
+        this.surfaceLiftTarget = Math.max(this.surfaceLiftTarget, contact.lift || 0);
+        if (this.surf < 0.55 || this.speed < 5.8 || this._slipCooldown > 0 || !contact.slip) return;
+
+        const rightX = Math.cos(this.facing);
+        const rightZ = -Math.sin(this.facing);
+        const sideDot = dx * rightX + dz * rightZ;
+        const side = sideDot === 0 ? (Math.sin(contact.x * 9.1 + contact.z) < 0 ? -1 : 1) : Math.sign(sideDot);
+        const impulse = Math.min(4.2, 0.65 + this.speed * 0.14) * contact.slip;
+        this.velocity.x += rightX * side * impulse;
+        this.velocity.z += rightZ * side * impulse;
+        this.velocity.scaleInPlace(0.94);
+        this.slip = 1;
+        this.slipSide = side;
+        this._slipCooldown = 0.42;
+        rig?.addTrauma(0.10 + Math.min(0.10, this.speed * 0.004));
     }
 
     _walkStep(h) {
